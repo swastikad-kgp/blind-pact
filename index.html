@@ -1,0 +1,891 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Blind Pact</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Libre+Franklin:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one long case file. Tape-label header, a ledger-style scoreboard, then the current round as a stack of tear-off contract slips with rubber stamps for outcomes. */
+:root{
+  --paper:#e6e9e4; --card:#f5f6f1; --ink:#1b2330; --muted:#566170; --rule:#c3c9c1;
+  --pen:#22398a; --stamp:#b3302a; --ok:#2c6a48; --gold:#8a6d1f; --sel:#dfe6f7;
+  --tape:#1b2330; --tape-text:#f5f6f1;
+  --display:'Special Elite','Courier New',monospace;
+  --body:'Libre Franklin',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0f141a; --card:#18202a; --ink:#e4e9ed; --muted:#93a0ae; --rule:#2c3745;
+    --pen:#8fabff; --stamp:#ee6c5e; --ok:#6dc79a; --gold:#d8b75e; --sel:#1f2d4d;
+    --tape:#e4e9ed; --tape-text:#18202a; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0f141a; --card:#18202a; --ink:#e4e9ed; --muted:#93a0ae; --rule:#2c3745;
+  --pen:#8fabff; --stamp:#ee6c5e; --ok:#6dc79a; --gold:#d8b75e; --sel:#1f2d4d;
+  --tape:#e4e9ed; --tape-text:#18202a; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink); font-family:var(--body); font-size:16px; line-height:1.5;
+  padding-block:20px 72px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+}
+.wrap{max-width:880px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
+h1,h2,h3,h4{font-family:var(--display);font-weight:400;margin:0;text-wrap:balance;line-height:1.2}
+h1{font-size:clamp(1.8rem,5vw,2.7rem)}
+h2{font-size:1.4rem}
+h3{font-size:1.1rem;margin-top:18px}
+h4{font-size:1.15rem}
+p{margin:0}
+.lead{font-size:1.05rem;max-width:62ch}
+.note{color:var(--muted);font-size:.92rem}
+.kicker{font:500 .72rem var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* header */
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{font-family:var(--display);font-size:1.5rem;letter-spacing:.06em}
+.redact{background:var(--tape);color:var(--tape-text);padding:0 .35em;margin-right:.1em}
+.topr{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.roomtag{font:500 .8rem var(--mono);border:1.5px solid var(--ink);padding:4px 9px;background:var(--card)}
+.roomtag b{letter-spacing:.14em}
+
+/* controls */
+.btn{font:600 .95rem var(--body);padding:.65rem 1.05rem;border:2px solid var(--ink);background:var(--card);color:var(--ink);border-radius:3px;cursor:pointer;transition:transform .08s,box-shadow .08s}
+.btn:hover:not(:disabled){transform:translate(-1px,-1px);box-shadow:3px 3px 0 var(--ink)}
+.btn:focus-visible,.slip-btn:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--pen);outline-offset:2px}
+.btn.primary{background:var(--ink);color:var(--paper)}
+.btn.small{padding:.35rem .7rem;font-size:.85rem}
+.btn.tiny{padding:.15rem .5rem;font-size:.75rem;border-width:1.5px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+input[type=text]{font:500 1rem var(--body);padding:.65rem .8rem;border:2px solid var(--ink);background:var(--card);color:var(--ink);border-radius:3px;width:100%;min-width:0}
+label{font:600 .85rem var(--body)}
+
+/* sheets */
+.sheet{background:var(--card);border:1.5px solid var(--ink);padding:20px;position:relative;box-shadow:4px 4px 0 var(--rule);display:flex;flex-direction:column;gap:14px}
+.hero{gap:16px}
+.form{display:grid;gap:14px;max-width:460px}
+.field{display:grid;gap:6px}
+.joinrow{display:flex;gap:8px}
+.joinrow input{text-transform:uppercase;letter-spacing:.2em;font-family:var(--mono)}
+.divider{font:500 .75rem var(--mono);color:var(--muted);letter-spacing:.14em;text-transform:uppercase}
+.banner{display:flex;gap:12px;align-items:center;justify-content:space-between;border:2px solid var(--stamp);color:var(--stamp);padding:10px 14px;background:var(--card)}
+.banner span{min-width:0}
+
+/* lobby */
+.codebox{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.codelbl{font:500 .72rem var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.code{font:400 clamp(2rem,9vw,3.2rem) var(--display);letter-spacing:.22em;border:3px solid var(--stamp);color:var(--stamp);padding:2px 16px;transform:rotate(-2deg)}
+.roster{list-style:none;margin:0;padding:0;display:grid}
+.roster li{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px dashed var(--rule);min-width:0}
+.roster li:first-child{border-top:0}
+.roster .pn{min-width:0;overflow-wrap:anywhere;font-weight:600}
+.chip{font:500 .72rem var(--mono);padding:2px 9px;border:1px solid var(--rule);border-radius:99px;color:var(--muted);white-space:nowrap;display:inline-block}
+.chip.ok{border-color:var(--ok);color:var(--ok)}
+.chip.off{border-style:dashed}
+.chip.me{border-color:var(--pen);color:var(--pen)}
+
+/* round bar */
+.rbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.pips{display:flex;gap:6px}
+.pips i{width:22px;height:8px;border:1.5px solid var(--ink);display:block}
+.pips i.done{background:var(--ink)}
+.pips i.cur{background:var(--stamp);border-color:var(--stamp)}
+
+/* scoreboard */
+.board{border:1.5px solid var(--ink);background:var(--card)}
+.prow{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:12px;align-items:center;padding:10px 14px;border-top:1px dashed var(--rule)}
+.prow:first-child{border-top:0}
+.prow.out{opacity:.55}
+.prow .pn{min-width:0;overflow-wrap:anywhere;font-weight:600}
+.prow .coins{font:600 1.15rem var(--mono);min-width:3ch;text-align:right}
+.delta{font:600 .85rem var(--mono);min-width:3.4ch;text-align:right}
+.delta.up{color:var(--ok)} .delta.dn{color:var(--stamp)}
+.seals{display:inline-flex;gap:3px;align-items:center;min-width:2ch}
+.seals i{width:12px;height:12px;border-radius:50%;background:var(--stamp);display:block;box-shadow:inset 0 0 0 2px var(--card)}
+
+/* contract slips */
+.slips{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.slip{background:var(--card);border:1.5px solid var(--ink);padding:14px 16px 14px 42px;position:relative;display:flex;flex-direction:column;gap:8px;min-width:0;text-align:left;color:var(--ink)}
+.slip::before{content:"";position:absolute;left:13px;top:16px;width:13px;height:13px;border-radius:50%;background:var(--paper);border:1.5px solid var(--ink)}
+.slip-btn{font:inherit;cursor:pointer;width:100%}
+.slip-btn:hover{background:var(--sel)}
+.slip-btn[aria-pressed="true"]{background:var(--sel);outline:3px solid var(--pen);outline-offset:-1px}
+.slip.dim{border-style:dashed;opacity:.7}
+.slip-h{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.meta{font:500 .8rem var(--mono);color:var(--muted)}
+.tag{font:600 .7rem var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--pen)}
+.stamp{font-family:var(--display);text-transform:uppercase;letter-spacing:.12em;border:3px solid currentColor;padding:1px 9px;transform:rotate(-5deg);display:inline-block;color:var(--stamp);font-size:.95rem;white-space:nowrap}
+.stamp.ok{color:var(--ok)}
+.stamp.big{font-size:1.4rem;padding:3px 14px}
+.thump .stamp,.stamp.thump{animation:thump .35s ease-out both}
+
+/* dice */
+.roll-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.dice{display:flex;gap:8px}
+.die{width:36px;height:36px;display:grid;grid-template:repeat(3,1fr)/repeat(3,1fr);padding:5px;background:var(--card);border:2px solid var(--ink);border-radius:7px}
+.die i{border-radius:50%;display:block}
+.die i.on{background:var(--ink)}
+.rolling .die{animation:tumble .6s cubic-bezier(.2,.8,.3,1) both}
+.rolling .die:nth-child(2){animation-delay:.12s}
+.calc{font-size:.9rem;min-width:0;flex:1 1 180px}
+.parts{list-style:none;margin:0;padding:0;display:grid;gap:3px;font-size:.9rem}
+.parts li{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.parts .coop{color:var(--pen)} .parts .bet{color:var(--stamp)}
+.parts b{overflow-wrap:anywhere}
+.pay{font-size:.88rem;border-top:1px dashed var(--rule);padding-top:7px;display:grid;gap:2px}
+
+/* action form */
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.mode{border:2px solid var(--ink);background:var(--card);padding:12px;text-align:left;cursor:pointer;font:inherit;color:var(--ink);display:grid;gap:2px;border-radius:3px}
+.mode strong{font:400 1.15rem var(--display)}
+.mode span{font-size:.85rem;color:var(--muted)}
+.mode.c{border-color:var(--pen)} .mode.b{border-color:var(--stamp)}
+.mode.c[aria-pressed="true"]{background:var(--pen);color:var(--paper)}
+.mode.b[aria-pressed="true"]{background:var(--stamp);color:var(--paper)}
+.mode[aria-pressed="true"] span{color:inherit;opacity:.9}
+.mode:focus-visible{outline:3px solid var(--pen);outline-offset:2px}
+.seg{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.seg button{font:600 1.1rem var(--mono);padding:.55rem 0;border:2px solid var(--ink);background:var(--card);color:var(--ink);cursor:pointer;border-radius:3px}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.seg button:focus-visible{outline:3px solid var(--pen);outline-offset:2px}
+.seg.n3{grid-template-columns:repeat(3,1fr)}
+.seg.n3 button{font-size:.9rem}
+.practice{border-top:1px dashed var(--rule);padding-top:14px}
+.boost{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1.5px dashed var(--gold);color:var(--ink)}
+.boost input{margin-top:4px;width:18px;height:18px;accent-color:var(--stamp)}
+.sumline{font:500 .9rem var(--mono);color:var(--muted)}
+.step{font:500 .72rem var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+
+/* ledger */
+details{border:1.5px solid var(--ink);background:var(--card)}
+summary{cursor:pointer;padding:10px 14px;font:600 .95rem var(--body);display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap}
+details > .slips,details > p{margin:0 14px 14px}
+.ledger{display:grid;gap:10px}
+
+/* final */
+.rank{list-style:none;margin:0;padding:0;display:grid}
+.rank li{display:grid;grid-template-columns:2.2ch minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 0;border-top:1px dashed var(--rule)}
+.rank li:first-child{border-top:0}
+.rank .n{font:600 1.1rem var(--mono);color:var(--muted)}
+.rank .nm{min-width:0;overflow-wrap:anywhere;font-weight:600;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.rank .coins{font:600 1.3rem var(--mono)}
+
+/* modal + toast */
+.modal{position:fixed;inset:0;background:rgba(8,12,16,.65);z-index:50;overflow:auto;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.modal-card{background:var(--card);border:2px solid var(--ink);max-width:700px;margin:0 auto;padding:22px;display:flex;flex-direction:column;gap:10px;box-shadow:6px 6px 0 var(--rule)}
+.modal-card ul,.modal-card ol{margin:0;padding-left:1.2rem;display:grid;gap:6px}
+.modal-head{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.odds{display:flex;flex-wrap:wrap;gap:6px}
+.odds span{font:500 .8rem var(--mono);border:1px solid var(--rule);padding:3px 8px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:8px 16px;font:500 .85rem var(--mono);z-index:60}
+
+@keyframes thump{0%{transform:rotate(-5deg) scale(1.9);opacity:0}70%{transform:rotate(-5deg) scale(.96);opacity:1}100%{transform:rotate(-5deg) scale(1)}}
+@keyframes tumble{0%{transform:rotate(-260deg) translateY(-18px);opacity:0}100%{transform:none;opacity:1}}
+@media (prefers-reduced-motion: reduce){
+  .rolling .die,.thump .stamp,.stamp.thump{animation:none}
+  .btn{transition:none}
+}
+@media (max-width:480px){
+  .modes{grid-template-columns:1fr}
+  .prow{gap:8px;padding:10px}
+  .sheet{padding:16px}
+}
+</style>
+
+<div id="app"></div>
+<div id="modal" class="modal" role="dialog" aria-modal="true" aria-label="Rules" hidden></div>
+<div id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script>
+//#LOGIC-START
+const ROUNDS=8, START_COINS=10, INCOME=5;
+const TIERS=[
+  {name:'Dead Drop',reward:8,diff:6},
+  {name:"Smuggler's Run",reward:12,diff:9},
+  {name:'Casino Floor',reward:18,diff:12},
+  {name:'Vault Job',reward:26,diff:15}
+];
+const sum=a=>a.reduce((x,y)=>x+y,0);
+const rnd=n=>Math.floor(Math.random()*n);
+
+function sha256(ascii){
+  const rrot=(v,a)=>(v>>>a)|(v<<(32-a));
+  const mp=Math.pow, mw=mp(2,32);
+  let result='', words=[], bitLen=ascii.length*8, hash=[], k=[], pc=0;
+  const comp={};
+  for(let c=2;pc<64;c++){
+    if(!comp[c]){
+      for(let i=0;i<313;i+=c) comp[i]=c;
+      hash[pc]=(mp(c,.5)*mw)|0;
+      k[pc++]=(mp(c,1/3)*mw)|0;
+    }
+  }
+  ascii+='\x80';
+  while(ascii.length%64-56) ascii+='\x00';
+  for(let i=0;i<ascii.length;i++){
+    const j=ascii.charCodeAt(i);
+    if(j>>8) return '';
+    words[i>>2]|=j<<((3-i)%4)*8;
+  }
+  words[words.length]=((bitLen/mw)|0);
+  words[words.length]=bitLen;
+  for(let j=0;j<words.length;){
+    const w=words.slice(j,j+=16), old=hash;
+    hash=hash.slice(0,8);
+    for(let i=0;i<64;i++){
+      const w15=w[i-15], w2=w[i-2], a=hash[0], e=hash[4];
+      const t1=hash[7]+(rrot(e,6)^rrot(e,11)^rrot(e,25))+((e&hash[5])^((~e)&hash[6]))+k[i]
+        +(w[i]=(i<16)?w[i]:(w[i-16]+(rrot(w15,7)^rrot(w15,18)^(w15>>>3))+w[i-7]+(rrot(w2,17)^rrot(w2,19)^(w2>>>10)))|0);
+      const t2=(rrot(a,2)^rrot(a,13)^rrot(a,22))+((a&hash[1])^(a&hash[2])^(hash[1]&hash[2]));
+      hash=[(t1+t2)|0].concat(hash);
+      hash[4]=(hash[4]+t1)|0;
+    }
+    for(let i=0;i<8;i++) hash[i]=(hash[i]+old[i])|0;
+  }
+  for(let i=0;i<8;i++) for(let j=3;j+1;j--){const b=(hash[i]>>(j*8))&255; result+=((b<16)?0:'')+b.toString(16);}
+  return result;
+}
+
+const canon=(code,r,u,rv)=>`${code}|${r}|${u}|${rv.contract}|${rv.mode}|${rv.energy}|${rv.boost}|${rv.salt}`;
+function validReveal(rv){
+  return !!rv && Number.isInteger(rv.contract) && rv.contract>=0 && rv.contract<4
+    && (rv.mode==='C'||rv.mode==='B')
+    && Number.isInteger(rv.energy) && rv.energy>=1 && rv.energy<=5
+    && (rv.boost===0||rv.boost===1)
+    && typeof rv.salt==='string' && /^[0-9a-f]{8,32}$/.test(rv.salt);
+}
+function genContracts(){
+  return TIERS.map(t=>({name:t.name,reward:t.reward+rnd(3)-1,diff:t.diff+rnd(3)-1}));
+}
+function odds(n){ // chance two dice reach n
+  let c=0; for(let a=1;a<=6;a++) for(let b=1;b<=6;b++) if(a+b>=n) c++;
+  return Math.round(c/36*100);
+}
+function activeAt(g,r){ const k=g.kicked||{}; return (g.order||[]).filter(u=>!(k[u]&&k[u]<=r)); }
+function phaseOf(g,r,mv){
+  const act=activeAt(g,r);
+  if(act.some(u=>!(mv[r+'-'+u]&&mv[r+'-'+u].commit))) return 'choose';
+  if(act.some(u=>!mv[r+'-'+u].reveal)) return 'reveal';
+  return 'results';
+}
+function split(reward,coop){
+  const tot=sum(coop.map(p=>p.eff));
+  const base=coop.map((p,i)=>{const x=reward*p.eff/tot,fl=Math.floor(x+1e-9);return {uid:p.uid,fl,fr:x-fl,i};});
+  let left=reward-sum(base.map(b=>b.fl));
+  base.slice().sort((a,b)=>b.fr-a.fr||a.i-b.i).forEach(b=>{if(left>0){b.fl++;left--;}});
+  const pay={}; base.forEach(b=>{pay[b.uid]=b.fl;}); return pay;
+}
+function resolveRound(g,r,act,mv,coins,tokens){
+  const contracts=g['contracts_'+r]||[];
+  const voided=[], valid=[], dC={}, dT={};
+  act.forEach(u=>{dC[u]=0;dT[u]=0;});
+  act.forEach(u=>{
+    const m=mv[r+'-'+u], rv=m&&m.reveal;
+    if(validReveal(rv) && sha256(canon(g.code,r,u,rv))===m.commit){
+      let boost=rv.boost; if(boost&&(tokens[u]||0)<2) boost=0;
+      valid.push({uid:u,contract:rv.contract,mode:rv.mode,energy:rv.energy,boost,eff:rv.energy+(boost?3:0)});
+    } else voided.push(u);
+  });
+  valid.forEach(p=>{
+    coins[p.uid]-=p.energy; dC[p.uid]-=p.energy;
+    if(p.boost){tokens[p.uid]-=2; dT[p.uid]-=2;}
+  });
+  const salts=act.map(u=>{const m=mv[r+'-'+u];return (m&&m.reveal&&typeof m.reveal.salt==='string')?m.reveal.salt:'-';}).join(',');
+  const seed=sha256(g.seed+'|'+r+'|'+salts);
+  const out=contracts.map((c,i)=>{
+    const parts=valid.filter(p=>p.contract===i);
+    if(!parts.length) return {i,c,parts:[],empty:true};
+    const coop=parts.filter(p=>p.mode==='C'), bet=parts.filter(p=>p.mode==='B');
+    const d1=parseInt(seed.substr(i*8,4),16)%6+1, d2=parseInt(seed.substr(i*8+4,4),16)%6+1;
+    const coopE=sum(coop.map(p=>p.eff)), betE=sum(bet.map(p=>p.eff));
+    const need=c.diff+betE, total=coopE+d1+d2;
+    const success=coop.length>0 && total>=need;
+    const wouldHave=coop.length>0 && total>=c.diff;
+    let pay={}, seals=[];
+    if(success) pay=split(c.reward,coop);
+    else{
+      bet.forEach(p=>{pay[p.uid]=Math.min(9,3*coop.length);});
+      if(wouldHave) bet.forEach(p=>seals.push(p.uid));
+    }
+    Object.keys(pay).forEach(u=>{coins[u]+=pay[u]; dC[u]+=pay[u];});
+    seals.forEach(u=>{tokens[u]+=1; dT[u]+=1;});
+    return {i,c,parts,d1,d2,coopE,betE,need,total,success,pay,seals,coopN:coop.length};
+  });
+  return {out,voided,dC,dT};
+}
+function computeState(g,mv){
+  const order=g.order||[], R=g.round||0, coins={}, tokens={}, rounds=[];
+  order.forEach(u=>{coins[u]=START_COINS;tokens[u]=0;});
+  for(let r=1;r<=R;r++){
+    const act=activeAt(g,r);
+    act.forEach(u=>{coins[u]+=INCOME;});
+    const ph=phaseOf(g,r,mv);
+    if(ph!=='results'){rounds.push({r,phase:ph,resolved:false,active:act}); break;}
+    const res=resolveRound(g,r,act,mv,coins,tokens);
+    rounds.push({r,phase:'results',resolved:true,active:act,out:res.out,voided:res.voided,deltaCoins:res.dC,deltaTokens:res.dT});
+  }
+  return {rounds,coins,tokens};
+}
+//#LOGIC-END
+
+/* ---------- app ---------- */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ls={
+  get(k){try{return localStorage.getItem(k)}catch(e){return null}},
+  set(k,v){try{localStorage.setItem(k,v)}catch(e){}},
+  del(k){try{localStorage.removeItem(k)}catch(e){}}
+};
+function randHex(n){
+  try{const a=new Uint8Array(n/2);crypto.getRandomValues(a);return Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');}
+  catch(e){let s='';while(s.length<n)s+=rnd(16).toString(16);return s;}
+}
+const CODE_CHARS='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const makeCode=()=>Array.from({length:5},()=>CODE_CHARS[rnd(CODE_CHARS.length)]).join('');
+
+const app=document.getElementById('app');
+let db=null,uid=null,ready=false,canWrite=null;
+let code=null,game=null,players={},moves={},st=null,unsubs=[],loadedGame=false;
+const pending={},revealing={},seen={},lateTimer={};
+let practice=false,realDb=null,realUid=null;
+const botPending={},botBusy={},botDone={},botStyle={};
+function resetRoomMaps(){
+  [pending,revealing,seen,botPending,botBusy,botDone,botStyle].forEach(o=>Object.keys(o).forEach(k=>delete o[k]));
+  Object.keys(lateTimer).forEach(k=>{clearTimeout(lateTimer[k]);delete lateTimer[k];});
+}
+const ui={name:ls.get('bp:name')||'',jc:'',bots:4,err:'',busy:false,contract:null,mode:null,energy:3,boost:false,forRound:0,kickAsk:null,open:{},late:0,toast:''};
+let raf=0,lastHtml='';
+
+/* ----- helpers for display ----- */
+const nm=u=>esc((game&&game.names&&game.names[u])||(players[u]&&players[u].name)||'Player');
+const mid=(c,r,u)=>`moves/${c}_${r}_${u}`;
+const pid=(c,u)=>`players/${c}_${u}`;
+const PIPS={1:[5],2:[1,9],3:[1,5,9],4:[1,3,7,9],5:[1,3,5,7,9],6:[1,3,4,6,7,9]};
+const die=n=>`<span class="die" role="img" aria-label="die showing ${n}">${[1,2,3,4,5,6,7,8,9].map(i=>`<i${PIPS[n].includes(i)?' class="on"':''}></i>`).join('')}</span>`;
+const seals=n=>n>0?`<span class="seals" role="img" aria-label="${n} reputation seal${n>1?'s':''}">${'<i></i>'.repeat(Math.min(n,6))}${n>6?'<small>+</small>':''}</span>`:'<span class="seals note" aria-label="no seals">–</span>';
+const signed=d=>d>0?'+'+d:d<0?'−'+Math.abs(d):'±0';
+
+function toast(msg){ui.toast=msg;paintToast();setTimeout(()=>{if(ui.toast===msg){ui.toast='';paintToast();}},1800);}
+function paintToast(){$('#toast').innerHTML=ui.toast?`<div class="toast" role="status">${esc(ui.toast)}</div>`:'';}
+
+function fail(e){
+  const c=e&&e.code;
+  ui.err=c==='invalid_argument'?"That didn't save. If it keeps happening you may only have view access. Ask whoever shared this page for contributor access."
+    :c==='quota_exceeded'?'This page has reached its storage limit. Tell whoever shared it.'
+    :c==='resource_exhausted'?'Too many requests at once. Wait a few seconds and try again.'
+    :'Something went wrong. Check your connection and try again.';
+  ui.busy=false; render();
+}
+async function guard(fn){
+  ui.err=''; ui.busy=true; render();
+  try{await fn();}catch(e){fail(e);return;}
+  ui.busy=false; render();
+}
+
+/* ----- rooms ----- */
+function cleanName(){return (ui.name||'').trim().replace(/\s+/g,' ').slice(0,20);}
+function needName(){
+  const n=cleanName();
+  if(!n){ui.err='Enter a name so the others know who you are.';render();return null;}
+  ls.set('bp:name',n); return n;
+}
+function enterRoom(c){
+  code=c; if(!practice) ls.set('bp:room',c);
+  unsubs.forEach(f=>f()); unsubs=[]; game=null; players={}; moves={}; st=null; loadedGame=false;
+  const onErr=e=>fail(e);
+  unsubs.push(db.doc('games/'+c).onSnapshot(s=>{game=s.exists?s.data():null;loadedGame=true;refresh();},onErr));
+  unsubs.push(db.collection('players').where('code','==',c).onSnapshot(q=>{
+    players={}; q.docs.forEach(d=>{const x=d.data(); players[x.uid]=x;}); refresh();
+  },onErr));
+  unsubs.push(db.collection('moves').where('code','==',c).onSnapshot(q=>{
+    moves={}; q.docs.forEach(d=>{const x=d.data(); moves[x.round+'-'+x.uid]=x;}); refresh();
+  },onErr));
+  render();
+}
+function leaveRoom(){
+  unsubs.forEach(f=>f()); unsubs=[];
+  const was=practice;
+  if(was){practice=false; db=realDb; uid=realUid; realDb=null; resetRoomMaps();}
+  code=null; game=null; players={}; moves={}; st=null; loadedGame=false;
+  if(!was) ls.del('bp:room');
+  ui.err=''; render();
+}
+function refresh(){
+  if(game&&game.status!=='lobby'&&(game.order||[]).length&&game.round>0){
+    try{st=computeState(game,moves);}catch(e){console.error(e);}
+    if(ui.forRound!==game.round){
+      ui.forRound=game.round; ui.contract=null; ui.mode=null; ui.energy=3; ui.boost=false; ui.kickAsk=null;
+    }
+    maybeReveal();
+    const cur=st&&st.rounds[game.round-1];
+    if(cur&&cur.phase==='results'&&game.status==='playing'&&game.hostId!==uid&&!lateTimer[game.round]){
+      const r=game.round;
+      lateTimer[r]=setTimeout(()=>{ui.late=r;render();},30000);
+    }
+  } else st=null;
+  if(practice) setTimeout(botsTick,500);
+  render();
+}
+function getPending(r){
+  const key=code+':'+r;
+  if(pending[key]) return pending[key];
+  try{const raw=ls.get('bp:p:'+key); if(raw){const rv=JSON.parse(raw); if(validReveal(rv)){pending[key]=rv;return rv;}}}catch(e){}
+  return null;
+}
+function maybeReveal(){
+  if(!game||!uid||game.status!=='playing') return;
+  const r=game.round;
+  if(!activeAt(game,r).includes(uid)) return;
+  if(phaseOf(game,r,moves)!=='reveal') return;
+  const m=moves[r+'-'+uid]; if(!m||m.reveal) return;
+  const key=code+':'+r; if(revealing[key]) return;
+  const rv=getPending(r); if(!rv) return;
+  revealing[key]=1;
+  db.doc(mid(code,r,uid)).update({reveal:rv}).catch(e=>{delete revealing[key];fail(e);});
+}
+
+/* ----- actions ----- */
+const ACT={
+  rules(){openRules();},
+  dismiss(){ui.err='';render();},
+  leave(){
+    const g=game, c=code;
+    if(g&&g.status==='lobby'&&g.hostId!==uid&&db){db.doc(pid(c,uid)).delete().catch(()=>{});}
+    leaveRoom();
+  },
+  home(){leaveRoom();},
+  async create(){
+    const n=needName(); if(!n) return;
+    await guard(async()=>{
+      for(let t=0;t<6;t++){
+        const c=makeCode();
+        const s=await db.doc('games/'+c).get();
+        if(s.exists) continue;
+        await db.doc('games/'+c).set({code:c,hostId:uid,status:'lobby',round:0,total:ROUNDS,createdAt:Date.now(),seed:randHex(24),kicked:{},order:[]});
+        await db.doc(pid(c,uid)).set({code:c,uid,name:n,joinedAt:Date.now()});
+        enterRoom(c); return;
+      }
+      throw {code:'unavailable'};
+    });
+  },
+  async join(){
+    const n=needName(); if(!n) return;
+    const c=(ui.jc||'').trim().toUpperCase();
+    if(c.length<4){ui.err='Enter the room code your host shared.';render();return;}
+    if(!/^[A-Z0-9]+$/.test(c)){ui.err='Room codes use letters and numbers only.';render();return;}
+    await guard(async()=>{
+      const s=await db.doc('games/'+c).get();
+      if(!s.exists){ui.err='No room with that code. Check it with the host.';return;}
+      const g=s.data();
+      if(g.status!=='lobby'){
+        if((g.order||[]).includes(uid)){enterRoom(c);return;}
+        ui.err='That game has already started, so no new seats are open.';return;
+      }
+      const ref=db.doc(pid(c,uid)), ps=await ref.get();
+      if(ps.exists) await ref.update({name:n}); else await ref.set({code:c,uid,name:n,joinedAt:Date.now()});
+      enterRoom(c);
+    });
+  },
+  copycode(){
+    const done=()=>toast('Code copied');
+    try{navigator.clipboard.writeText(code).then(done,()=>toast('Select the code and copy it by hand'));}
+    catch(e){toast('Select the code and copy it by hand');}
+  },
+  async start(){
+    const list=Object.values(players).sort((a,b)=>a.joinedAt-b.joinedAt);
+    if(list.length<2||game.hostId!==uid) return;
+    const used={}, names={};
+    list.forEach(p=>{
+      let n=p.name, base=n, i=1;
+      while(used[n.toLowerCase()]){i++; n=base+' '+i;}
+      used[n.toLowerCase()]=1; names[p.uid]=n;
+    });
+    await guard(()=>db.doc('games/'+code).update({
+      status:'playing',round:1,order:list.map(p=>p.uid),names,contracts_1:genContracts(),startedAt:Date.now()
+    }));
+  },
+  bots(n){ui.bots=+n;render();},
+  practice(){startPractice();},
+  pick(i){ui.contract=+i;render();},
+  mode(m){ui.mode=m;render();},
+  energy(n){ui.energy=+n;render();},
+  async seal(){
+    const r=game.round;
+    if(ui.contract==null||!ui.mode||moves[r+'-'+uid]) return;
+    const boost=(ui.boost&&(st.tokens[uid]||0)>=2)?1:0;
+    const rv={contract:ui.contract,mode:ui.mode,energy:ui.energy,boost,salt:randHex(16)};
+    const commit=sha256(canon(code,r,uid,rv));
+    const key=code+':'+r;
+    pending[key]=rv; ls.set('bp:p:'+key,JSON.stringify(rv));
+    await guard(()=>db.doc(mid(code,r,uid)).set({code,round:r,uid,commit,sealedAt:Date.now()}));
+  },
+  async next(){
+    const r=game.round, cur=st&&st.rounds[r-1];
+    if(game.status!=='playing'||!cur||cur.phase!=='results') return;
+    await guard(()=>r>=ROUNDS
+      ? db.doc('games/'+code).update({status:'done'})
+      : db.doc('games/'+code).update({round:r+1,['contracts_'+(r+1)]:genContracts()}));
+  },
+  async kick(u){
+    if(game.hostId!==uid||u===uid) return;
+    if(ui.kickAsk!==u){ui.kickAsk=u;render();return;}
+    ui.kickAsk=null;
+    await guard(()=>db.doc('games/'+code).update({kicked:{...(game.kicked||{}),[u]:game.round}}));
+  }
+};
+app.addEventListener('click',e=>{
+  const b=e.target.closest('[data-act]'); if(!b||b.disabled) return;
+  const f=ACT[b.dataset.act]; if(f) f(b.dataset.arg);
+});
+app.addEventListener('change',e=>{if(e.target.id==='boost'){ui.boost=e.target.checked;render();}});
+app.addEventListener('input',e=>{
+  if(e.target.id==='nm') ui.name=e.target.value;
+  if(e.target.id==='jc') ui.jc=e.target.value;
+});
+app.addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&e.target.id==='jc'){e.preventDefault();e.target.blur();ACT.join();}
+});
+app.addEventListener('focusout',()=>{setTimeout(()=>{if(!(document.activeElement&&app.contains(document.activeElement)&&document.activeElement.tagName==='INPUT')) render();},0);});
+app.addEventListener('toggle',e=>{const d=e.target; if(d&&d.dataset&&d.dataset.r) ui.open[d.dataset.r]=d.open;},true);
+
+/* ----- practice mode: an in-memory table with bots ----- */
+function makeFakeDb(){
+  const store={}, subs=new Set();
+  const clone=x=>JSON.parse(JSON.stringify(x));
+  const isObj=x=>x&&typeof x==='object'&&!Array.isArray(x);
+  const merge=(a,b)=>{for(const k in b){if(isObj(b[k])&&isObj(a[k])) merge(a[k],b[k]); else a[k]=clone(b[k]);}};
+  const meta={fromCache:false,hasPendingWrites:false};
+  const dsnap=p=>({id:p.split('/').pop(),exists:p in store,data:()=>(p in store?clone(store[p]):undefined),metadata:meta});
+  const qsnap=(col,wh)=>{
+    const docs=Object.keys(store).filter(p=>p.split('/')[0]===col&&wh.every(w=>store[p][w[0]]===w[2])).sort().map(dsnap);
+    return {docs,size:docs.length,empty:!docs.length,docChanges:()=>[],metadata:meta};
+  };
+  const later=fn=>setTimeout(fn,0);
+  const notify=()=>subs.forEach(s=>later(()=>{if(subs.has(s)) s.fire();}));
+  const listen=fire=>{const s={fire};subs.add(s);later(()=>{if(subs.has(s)) s.fire();});return ()=>subs.delete(s);};
+  const query=(col,wh)=>({
+    where:(f,o,v)=>query(col,wh.concat([[f,o,v]])),
+    get:async()=>qsnap(col,wh),
+    onSnapshot:next=>listen(()=>next(qsnap(col,wh)))
+  });
+  const docRef=p=>({
+    id:p.split('/').pop(),path:p,
+    get:async()=>dsnap(p),
+    set:async d=>{store[p]=clone(d);notify();},
+    update:async d=>{if(!(p in store)) throw {code:'invalid_argument'}; merge(store[p],d); notify();},
+    delete:async()=>{delete store[p];notify();},
+    onSnapshot:next=>listen(()=>next(dsnap(p)))
+  });
+  return {doc:docRef,collection:c=>Object.assign(query(c,[]),{doc:id=>docRef(c+'/'+id)})};
+}
+const BOT_NAMES=['Ravi','Meera','Kabir','Zoya','Arjun','Isha','Dev'];
+const BOT_STYLES=['steady','shark','wild','grudge'];
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=rnd(i+1);[a[i],a[j]]=[a[j],a[i]];}return a;}
+const pickOf=a=>a[rnd(a.length)];
+function botMove(u){
+  const style=botStyle[u]||'wild', r=game.round, tok=st.tokens[u]||0;
+  let contract,mode,energy;
+  if(style==='steady'){contract=pickOf([0,1,1,2]);mode='C';energy=3+rnd(2);}
+  else if(style==='shark'){contract=pickOf([1,2,3,3]);mode=rnd(100)<55?'B':'C';energy=2+rnd(4);}
+  else if(style==='grudge'){
+    contract=pickOf([1,2,2]);energy=3;mode='C';
+    const prev=st.rounds[r-2];
+    if(prev&&prev.out){
+      const hurt=prev.out.some(o=>!o.empty&&!o.success&&o.betE>0&&o.parts.some(p=>p.uid===u&&p.mode==='C'));
+      if(hurt&&rnd(100)<75) mode='B';
+    }
+  } else {contract=rnd(4);mode=rnd(2)?'C':'B';energy=1+rnd(5);}
+  const boost=tok>=2&&rnd(2)?1:0;
+  return {contract,mode,energy,boost,salt:randHex(16)};
+}
+function botsTick(){
+  if(!practice||!game||game.status!=='playing'||!st) return;
+  const d=db, c=code, r=game.round, ph=phaseOf(game,r,moves), act=activeAt(game,r);
+  game.order.forEach(u=>{
+    if(u.indexOf('bot_')!==0||!act.includes(u)) return;
+    const key=c+':'+r+':'+u, m=moves[r+'-'+u];
+    if(ph==='choose'&&!m&&!botBusy[key]){
+      botBusy[key]=1;
+      const rv=botMove(u); botPending[key]=rv;
+      const commit=sha256(canon(c,r,u,rv));
+      setTimeout(()=>{if(practice&&code===c) d.doc(mid(c,r,u)).set({code:c,round:r,uid:u,commit,sealedAt:Date.now()});},500+rnd(1600));
+    }
+    if(ph==='reveal'&&m&&!m.reveal&&botPending[key]&&!botDone[key]){
+      botDone[key]=1;
+      setTimeout(()=>{if(practice&&code===c) d.doc(mid(c,r,u)).update({reveal:botPending[key]});},300+rnd(800));
+    }
+  });
+}
+async function startPractice(){
+  if(practice) return;
+  const me=cleanName()||'You'; if(cleanName()) ls.set('bp:name',me);
+  realDb=db; realUid=uid; practice=true; db=makeFakeDb(); uid='you';
+  resetRoomMaps();
+  const nb=ui.bots||4, c='PR'+randHex(4), pool=shuffle(BOT_NAMES), styles=shuffle(BOT_STYLES);
+  const names={you:me}, order=['you'];
+  for(let i=1;i<=nb;i++){const b='bot_'+i; order.push(b); names[b]=pool[i-1]; botStyle[b]=styles[(i-1)%styles.length];}
+  await db.doc('games/'+c).set({code:c,hostId:'you',status:'playing',round:1,total:ROUNDS,createdAt:Date.now(),seed:randHex(24),kicked:{},order,names,contracts_1:genContracts()});
+  enterRoom(c);
+}
+
+/* ----- drawing ----- */
+function render(){cancelAnimationFrame(raf);raf=requestAnimationFrame(draw);}
+function draw(){
+  const ae=document.activeElement;
+  if(ae&&ae.tagName==='INPUT'&&ae.type==='text'&&app.contains(ae)) return;
+  const fk=ae&&ae.dataset&&ae.dataset.fk;
+  let body;
+  try{body=screen();}
+  catch(err){console.error(err);body='<section class="sheet"><p>Something broke while drawing this screen. Reload the page and you will rejoin your room.</p></section>';}
+  const html=`<div class="wrap">${header()}${ui.err?`<div class="banner" role="alert"><span>${esc(ui.err)}</span><button class="btn small" data-act="dismiss">Dismiss</button></div>`:''}${body}</div>`;
+  if(html===lastHtml) return;
+  app.innerHTML=html; lastHtml=html;
+  app.querySelectorAll('[data-act]').forEach(b=>{b.dataset.fk=b.dataset.act+(b.dataset.arg||'');});
+  if(fk){const t=app.querySelector('[data-fk="'+fk+'"]'); if(t) t.focus({preventScroll:true});}
+}
+function header(){
+  return `<header class="top"><div class="brand" aria-label="Blind Pact"><span class="redact">BLIND</span> PACT</div>
+  <div class="topr">${code?(practice?'<span class="roomtag">Practice vs bots</span>':`<span class="roomtag">Room <b>${esc(code)}</b></span>`):''}
+  <button class="btn small" data-act="rules">Read rules</button>
+  ${code?'<button class="btn small" data-act="leave">Leave</button>':''}</div></header>`;
+}
+function screen(){
+  if(!ready) return '<section class="sheet"><p class="note">Connecting to the table…</p></section>';
+  if(code&&(!db||!uid)) return `<section class="sheet"><h2>Sign in to play</h2><p class="lead">Blind Pact runs live between players, so the website needs a Firebase connection. Please reload or check your internet connection.</p><p class="note">You can still read the rules with the button above.</p></section>`;
+  if(!code) return home();
+  if(!game){
+    if(!loadedGame) return '<section class="sheet"><p class="note">Finding your room…</p></section>';
+    return `<section class="sheet"><h2>That room is gone</h2><p class="note">The room ${esc(code)} no longer exists.</p><div><button class="btn primary" data-act="home">Back to start</button></div></section>`;
+  }
+  if(game.status==='lobby') return lobby();
+  if(!st) return '<section class="sheet"><p class="note">Loading the game…</p></section>';
+  return gameView();
+}
+function home(){
+  const online=!!(db&&uid), dis=(ui.busy||!online)?' disabled':'';
+  return `<section class="sheet hero">
+    <p class="kicker">Repeated prisoner's dilemma &middot; live, any number of players</p>
+    <h1>Eight rounds. Four contracts. Trust is optional.</h1>
+    <p class="lead">Back a contract in secret, decide whether to help it along or sink it, and finish with more coins than everyone else. All moves are opened at the same moment.</p>
+    ${canWrite===false?'<p class="note" style="color:var(--stamp)">Online multiplayer is not available right now.</p>':''}
+    <div class="form">
+      <div class="field"><label for="nm">Your name at the table</label>
+      <input id="nm" type="text" maxlength="20" autocomplete="off" value="${esc(ui.name)}" placeholder="Your name"></div>
+      <button class="btn primary" data-act="create"${dis}>Open a new room</button>
+      <p class="divider">or join one</p>
+      <div class="joinrow"><input id="jc" type="text" maxlength="6" autocomplete="off" aria-label="Room code" value="${esc(ui.jc)}" placeholder="CODE"><button class="btn" data-act="join"${dis}>Join</button></div>
+    </div>
+    <div class="form practice"><p class="divider">test it alone</p>
+      <p class="note">${online?'Play a full 8-round game against computer players to check the rules and the feel.':'Online rooms need an internet connection. Practice mode works without it.'}</p>
+      <div class="seg n3" role="group" aria-label="Number of players">${[3,4,5].map(n=>`<button data-act="bots" data-arg="${n}" aria-pressed="${ui.bots===n}">${n+1} players</button>`).join('')}</div>
+      <button class="btn" data-act="practice">Practice with bots</button></div>
+    <p class="note">Built for the KGTS game intra. New here? Press Read rules at the top first.</p>
+  </section>`;
+}
+function lobby(){
+  const list=Object.values(players).sort((a,b)=>a.joinedAt-b.joinedAt);
+  const host=game.hostId===uid, n=list.length;
+  return `<section class="sheet"><p class="kicker">Waiting room</p>
+    <div class="codebox"><span class="codelbl">Room code</span><span class="code">${esc(code)}</span><button class="btn small" data-act="copycode">Copy code</button></div>
+    <p class="note">Send people this page plus the code. Anyone who joins before you start gets a seat.</p></section>
+  <section class="sheet"><h2>At the table <span class="chip">${n}</span></h2>
+    <ul class="roster">${list.map(p=>`<li><span class="pn">${esc(p.name)}</span>${p.uid===game.hostId?'<span class="chip">host</span>':''}${p.uid===uid?'<span class="chip me">you</span>':''}</li>`).join('')}</ul>
+    ${n<4||n>6?'<p class="note">The rules are written for 4 to 6 players. Other sizes work, but the contract numbers were not tuned for them.</p>':''}
+    ${host?`<div><button class="btn primary" data-act="start"${n<2||ui.busy?' disabled':''}>Start the game</button></div>${n<2?'<p class="note">Waiting for at least one more player.</p>':''}`:'<p class="note">Waiting for the host to start the game.</p>'}
+  </section>`;
+}
+function gameView(){
+  const R=game.round, done=game.status==='done';
+  const cur=st.rounds[R-1]||st.rounds[st.rounds.length-1];
+  const act=activeAt(game,R), me=act.includes(uid), host=game.hostId===uid;
+  let out='';
+  if(done) out+=finalHTML();
+  else out+=roundBar(R,cur.phase)+board(cur,act)+panel(cur,act,me,host);
+  return out+ledger(done);
+}
+function roundBar(R,phase){
+  const label={choose:'Sealing moves',reveal:'Opening envelopes',results:'Results'}[phase];
+  let pips=''; for(let i=1;i<=ROUNDS;i++) pips+=`<i class="${i<R||(i===R&&phase==='results')?'done':i===R?'cur':''}"></i>`;
+  return `<div class="rbar"><div><p class="kicker">${label}</p><h2>Round ${R} of ${ROUNDS}</h2></div><div class="pips" role="img" aria-label="Round ${R} of ${ROUNDS}">${pips}</div></div>`;
+}
+function board(cur,act){
+  const R=game.round, phase=cur.phase, host=game.hostId===uid;
+  const order=game.order.map((u,i)=>({u,i,out:!act.includes(u)}))
+    .sort((a,b)=>(a.out-b.out)||(st.coins[b.u]-st.coins[a.u])||(a.i-b.i));
+  const rows=order.map(({u,out})=>{
+    const m=moves[R+'-'+u]; let status='';
+    if(out) status='<span class="chip off">removed</span>';
+    else if(phase==='choose') status=(m&&m.commit)?'<span class="chip ok">sealed</span>':'<span class="chip">thinking</span>';
+    else if(phase==='reveal') status=(m&&m.reveal)?'<span class="chip ok">opened</span>':'<span class="chip">opening</span>';
+    else{const d=cur.deltaCoins[u]; status=d==null?'':`<span class="delta ${d>0?'up':d<0?'dn':''}">${signed(d)}</span>`;}
+    const waiting=!out&&u!==uid&&((phase==='choose'&&!(m&&m.commit))||(phase==='reveal'&&!(m&&m.reveal)));
+    const kick=host&&waiting?`<button class="btn tiny" data-act="kick" data-arg="${esc(u)}">${ui.kickAsk===u?'Confirm remove':'Remove'}</button>`:'';
+    return `<div class="prow${out?' out':''}"><span class="pn">${nm(u)}${u===uid?' <span class="chip me">you</span>':''}${u===game.hostId?' <span class="chip">host</span>':''}${u.startsWith('bot_')?' <span class="chip">bot</span>':''} ${kick}</span>${status}${seals(st.tokens[u]||0)}<span class="coins" aria-label="${st.coins[u]} coins">${st.coins[u]}</span></div>`;
+  }).join('');
+  return `<section aria-label="Scoreboard"><div class="board">${rows}</div><p class="note" style="margin-top:6px">Coins on the right, reputation seals beside them.${phase==='results'?' The coloured number is this round’s change.':''}</p></section>`;
+}
+function panel(cur,act,me,host){
+  const R=game.round, phase=cur.phase;
+  if(!me) return `<section class="sheet"><h2>You were removed</h2><p class="note">The host took you out of this game. You can leave and join another room.</p></section>`;
+  if(phase==='choose') return moves[R+'-'+uid]?sealedCard():actionForm();
+  if(phase==='reveal') return `<section class="sheet"><h2>Everyone has sealed</h2><p class="note">Envelopes are being opened and the dice rolled. If a player's browser is closed this can stall.${host?' Use Remove on anyone who is stuck.':' The host can remove anyone who is stuck.'}</p>${getPending(R)||moves[R+'-'+uid].reveal?'':'<p style="color:var(--stamp)">Your sealed move is not stored in this browser, so it cannot be opened. Ask the host to remove you.</p>'}</section>`;
+  return resultsPanel(cur,host);
+}
+function contractSlip(c,i){
+  const sel=ui.contract===i;
+  return `<button class="slip slip-btn" data-act="pick" data-arg="${i}" aria-pressed="${sel}">
+    <span class="slip-h"><h4>${esc(c.name)}</h4>${sel?'<span class="tag">Chosen</span>':''}</span>
+    <span class="meta">Reward ${c.reward} &middot; Difficulty ${c.diff}</span>
+    <span class="note">Dice alone reach it ${odds(c.diff)}% of the time</span></button>`;
+}
+function actionForm(){
+  const R=game.round, cs=game['contracts_'+R]||[], tok=st.tokens[uid]||0, coins=st.coins[uid]||0;
+  const ready=ui.contract!=null&&ui.mode;
+  return `<section class="sheet">
+    <div><p class="step">Step 1</p><h2>Pick a contract</h2><p class="note">Other players can pick the same one. Nobody sees your choice until everyone has sealed.</p></div>
+    <div class="slips">${cs.map(contractSlip).join('')}</div>
+    <div><p class="step">Step 2</p><h2>Help it or sink it</h2></div>
+    <div class="modes">
+      <button class="mode c" data-act="mode" data-arg="C" aria-pressed="${ui.mode==='C'}"><strong>Cooperate</strong><span>Your energy pushes the dice total up. Share the reward if it works.</span></button>
+      <button class="mode b" data-act="mode" data-arg="B" aria-pressed="${ui.mode==='B'}"><strong>Betray</strong><span>Your energy raises the difficulty. You profit only if it fails.</span></button>
+    </div>
+    <div><p class="step">Step 3</p><h2>Energy to invest</h2><p class="note">Each point costs 1 coin.</p></div>
+    <div class="seg" role="group" aria-label="Energy">${[1,2,3,4,5].map(n=>`<button data-act="energy" data-arg="${n}" aria-pressed="${ui.energy===n}">${n}</button>`).join('')}</div>
+    ${tok>=2?`<label class="boost" for="boost"><input id="boost" type="checkbox"${ui.boost?' checked':''}><span>Spend 2 seals for a one-time <b>+3 energy</b> on this move. It costs no coins and counts for cooperating or sabotaging. You have ${tok} seals.</span></label>`:''}
+    <p class="sumline">Cost ${ui.energy} coin${ui.energy>1?'s':''} &middot; you hold ${coins} &middot; ${coins-ui.energy} left after paying${ui.boost&&tok>=2?' &middot; effective energy '+(ui.energy+3):''}</p>
+    <div><button class="btn primary" data-act="seal"${ready&&!ui.busy?'':' disabled'}>Seal my move</button>${ready?'':' <span class="note">Choose a contract and Cooperate or Betray first.</span>'}</div>
+  </section>`;
+}
+function sealedCard(){
+  const R=game.round, rv=getPending(R), cs=game['contracts_'+R]||[];
+  const mine=rv?`<p><b>${esc((cs[rv.contract]||{}).name||'')}</b> &middot; ${rv.mode==='C'?'Cooperate':'Betray'} &middot; energy ${rv.energy}${rv.boost?' + 3 boost':''}</p>`:'';
+  return `<section class="sheet"><p class="kicker">Sealed</p><h2>Your move is locked in</h2>${mine}<p class="note">Waiting for the others. Check the scoreboard above to see who is still thinking.</p></section>`;
+}
+function slipResult(o,fresh){
+  if(o.empty) return `<article class="slip dim"><h4>${esc(o.c.name)}</h4><span class="meta">Reward ${o.c.reward} &middot; Difficulty ${o.c.diff}</span><p class="note">Nobody took this contract.</p></article>`;
+  const calc=o.coopN===0?'Nobody cooperated, so nothing could succeed.'
+    :`Cooperating energy ${o.coopE} + dice ${o.d1+o.d2} = <b>${o.total}</b>. Needed <b>${o.need}</b>${o.betE?` (${o.c.diff} + ${o.betE} sabotage)`:''}.`;
+  const parts=o.parts.map(p=>`<li class="${p.mode==='C'?'coop':'bet'}"><b>${nm(p.uid)}</b> ${p.mode==='C'?'cooperated':'betrayed'} with ${p.energy}${p.boost?' +3':''}</li>`).join('');
+  const pay=Object.keys(o.pay).filter(u=>o.pay[u]>0).map(u=>`<span><b>${nm(u)}</b> earns ${o.pay[u]}</span>`).join('');
+  const sl=o.seals.map(u=>`<span><b>${nm(u)}</b> gains a seal</span>`).join('');
+  const none=!pay&&!sl?'<span class="note">No payout.</span>':'';
+  return `<article class="slip${fresh?' thump':''}"><div class="slip-h"><h4>${esc(o.c.name)}</h4><span class="stamp ${o.success?'ok':''}">${o.success?'Funded':'Collapsed'}</span></div>
+    <span class="meta">Reward ${o.c.reward} &middot; Difficulty ${o.c.diff}</span>
+    <div class="roll-row${fresh?' rolling':''}"><div class="dice">${die(o.d1)}${die(o.d2)}</div><p class="calc">${calc}</p></div>
+    <ul class="parts">${parts}</ul><div class="pay">${pay}${sl}${none}</div></article>`;
+}
+function roundHTML(rr,fresh){
+  const v=rr.voided.length?`<p class="note">No valid move this round from ${rr.voided.map(nm).join(', ')}.</p>`:'';
+  return `<div class="slips">${rr.out.map(o=>slipResult(o,fresh)).join('')}</div>${v}`;
+}
+function resultsPanel(cur,host){
+  const R=game.round, t=seen[R]||(seen[R]=Date.now()+1600), fresh=Date.now()<t;
+  const last=R>=ROUNDS;
+  const can=host||ui.late===R;
+  return `<section class="sheet"><h2>What happened</h2>${roundHTML(cur,fresh)}
+    <div>${can?`<button class="btn primary" data-act="next"${ui.busy?' disabled':''}>${last?'See final standings':'Start round '+(R+1)}</button>`:`<p class="note">Waiting for the host to start the next round.</p>`}</div></section>`;
+}
+function ledger(done){
+  const R=game.round;
+  const list=st.rounds.filter(x=>x.resolved&&(done||x.r<R)).reverse();
+  if(!list.length) return '';
+  const items=list.map(x=>{
+    const f=x.out.filter(o=>!o.empty&&o.success).length, c=x.out.filter(o=>!o.empty&&!o.success).length;
+    const open=ui.open[x.r]!==undefined?ui.open[x.r]:(done&&x.r===R);
+    return `<details data-r="${x.r}"${open?' open':''}><summary><span>Round ${x.r}</span><span class="note">${f} funded &middot; ${c} collapsed</span></summary>${roundHTML(x,false)}</details>`;
+  }).join('');
+  return `<section class="ledger" aria-label="Ledger"><h3>Ledger</h3>${items}</section>`;
+}
+function finalHTML(){
+  const k=game.kicked||{};
+  const ranked=game.order.filter(u=>!k[u]).sort((a,b)=>st.coins[b]-st.coins[a]);
+  const out=game.order.filter(u=>k[u]);
+  const top=ranked.length?st.coins[ranked[0]]:0;
+  const winners=ranked.filter(u=>st.coins[u]===top);
+  let rank=0,prev=null;
+  const rows=ranked.map((u,i)=>{
+    if(st.coins[u]!==prev){rank=i+1;prev=st.coins[u];}
+    return `<li><span class="n">${rank}</span><span class="nm">${nm(u)}${u===uid?' <span class="chip me">you</span>':''}${winners.includes(u)?`<span class="stamp ok thump">${winners.length>1?'Shared win':'Winner'}</span>`:''}</span><span class="coins">${st.coins[u]}</span></li>`;
+  }).join('');
+  return `<section class="sheet"><p class="kicker">After ${ROUNDS} rounds</p><h2>Final standings</h2>
+    <ol class="rank">${rows}</ol>
+    ${out.length?`<p class="note">Removed during play: ${out.map(nm).join(', ')}</p>`:''}
+    ${winners.length>1?'<p class="note">Tied on coins, so the win is shared.</p>':''}
+    <div><button class="btn primary" data-act="home">Back to start</button></div></section>`;
+}
+
+/* ----- rules ----- */
+function rulesHTML(){
+  const od=[];for(let n=4;n<=12;n++)od.push(`<span>${n}+ &rarr; ${odds(n)}%</span>`);
+  return `<div class="modal-card"><div class="modal-head"><h2>How Blind Pact works</h2><button class="btn small" data-close="1" id="closeRules">Close</button></div>
+  <p class="lead">Eight rounds. Everyone backs a contract in secret and puts energy behind it, either to help it succeed or to sink it. Most coins after round 8 wins.</p>
+  <h3>Setup</h3><ul>
+    <li>Built for 4 to 6 players. This version lets a room start with any number from 2 up.</li>
+    <li>Everyone starts with 10 coins and receives 5 more at the start of every round.</li>
+    <li>Each round shows 4 contracts. Every contract has its own reward and difficulty.</li>
+    <li>You get 5 energy points each round. Two six-sided dice add randomness.</li></ul>
+  <h3>Each round</h3><ol>
+    <li>Secretly choose one contract. Several players can choose the same one.</li>
+    <li>Choose how much energy to invest (1 to 5) and whether you <b>Cooperate</b> or <b>Betray</b>. Each energy point costs 1 coin.</li>
+    <li>Once everyone has chosen, all choices are revealed together.</li>
+    <li>For every contract someone chose, two dice are rolled. Add the total energy of the cooperating players to the dice sum. If it reaches the difficulty, the contract succeeds.</li>
+    <li>A betrayer's energy raises the contract's difficulty instead of helping it.</li></ol>
+  <h3>Payouts</h3><ul>
+    <li><b>Success:</b> the reward is split among the cooperators in proportion to their energy. Betrayers earn nothing.</li>
+    <li><b>Failure:</b> each betrayer earns 3 coins for every cooperating player on that contract, up to 9. Betraying alone earns nothing.</li>
+    <li><b>Reputation:</b> every successful betrayal, meaning one that makes the contract fail, earns one seal. Two seals can be traded in once for +3 energy, on a cooperating move or a sabotaging one.</li></ul>
+  <h3>Winning</h3><p>After 8 rounds, the player with the most coins wins.</p>
+  <h3>Details this version settles</h3><ul>
+    <li>Contract rewards and difficulties come in four tiers (Dead Drop, Smuggler's Run, Casino Floor, Vault Job) and shift by a point or two each round.</li>
+    <li>A betrayal counts as successful when the contract fails, at least one player cooperated, and the cooperators would have succeeded without the betrayers' energy.</li>
+    <li>The seal boost is chosen when you seal your move. It costs no coins. Its +3 counts toward your share of a reward or toward sabotage.</li>
+    <li>Rewards are paid in whole coins. Any leftover coin goes to the largest share.</li>
+    <li>Players tied on coins at the end share the win.</li></ul>
+  <h3>Dice odds</h3><p class="note">Chance two dice alone reach a total:</p><div class="odds">${od.join('')}</div>
+  <h3>Why nobody can peek or cheat the dice</h3><p>Each move is locked with a fingerprint before anyone sees it, then opened and checked against that fingerprint. The dice are worked out from every player's secret salt, so no single person controls them.</p></div>`;
+}
+let lastFocus=null;
+function openRules(){
+  const m=$('#modal'); m.innerHTML=rulesHTML(); m.hidden=false; lastFocus=document.activeElement;
+  const c=$('#closeRules'); if(c) c.focus();
+}
+function closeRules(){const m=$('#modal'); m.hidden=true; m.innerHTML=''; if(lastFocus&&lastFocus.focus) lastFocus.focus();}
+$('#modal').addEventListener('click',e=>{if(e.target.id==='modal'||e.target.closest('[data-close]')) closeRules();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#modal').hidden) closeRules();});
+
+/* ----- Firebase boot ----- */
+(async function boot(){
+  render();
+  try{
+    const firebaseConfig={
+      apiKey:"AIzaSyCvA-bWE27NIcb8naeVy1ldb4RA0MImZns",
+      authDomain:"blind-pact-30779.firebaseapp.com",
+      projectId:"blind-pact-30779",
+      storageBucket:"blind-pact-30779.firebasestorage.app",
+      messagingSenderId:"933969254406",
+      appId:"1:933969254406:web:8cb46a7e86c2908dab0b87",
+      measurementId:"G-8YHVG25NXP"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth=firebase.auth();
+    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+    const credential=await auth.signInAnonymously();
+    uid=credential.user.uid;
+    db=firebase.firestore();
+    canWrite=true;
+  }catch(e){
+    console.error('Firebase connection failed:',e);
+    ui.err='Firebase connection failed: '+(e.message||String(e));
+  }
+  ready=true;
+  if(db&&uid){const saved=ls.get('bp:room');if(saved)enterRoom(saved);}
+  render();
+})();
+</script>
+
+</body></html>
