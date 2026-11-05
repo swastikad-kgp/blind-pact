@@ -207,25 +207,25 @@ details > .slips,details > p{margin:0 14px 14px}
 <script>
 //#LOGIC-START
 const ROUNDS=8, START_COINS=10, INCOME=5;
-// V8 balance playtest: difficulty scales by lobby size; original-backup remains on GitHub.
+// V10 adaptive difficulty: player-count and contract-count aware; original-backup remains on GitHub.
 const BETRAYAL_K=30;
 const ROUND_MULTIPLIERS=[1,1,1.1,1.1,1.2,1.2,1.3,1.4];
 const roundMultiplier=r=>ROUND_MULTIPLIERS[Math.max(0,Math.min(ROUNDS-1,r-1))];
-// Difficulties for small (2-4), medium (5-10), and large (11-15) rooms.
-// Rewards remain in the V7 range; two dice and seniors' bounty formula are unchanged.
+// Each contract keeps its reward and distinct risk. Difficulty is calculated afresh
+// from active player count and number of available contracts, not fixed lobby bands.
 const TIERS=[
-  {name:'Dead Drop',reward:10,diffs:[11,12,13]},
-  {name:"Smuggler's Run",reward:15,diffs:[13,15,16]},
-  {name:'Casino Floor',reward:23,diffs:[17,20,21]},
-  {name:'Vault Job',reward:32,diffs:[21,24,26]}
+  {name:'Dead Drop',reward:10,risk:0},
+  {name:"Smuggler's Run",reward:15,risk:2},
+  {name:'Casino Floor',reward:23,risk:5},
+  {name:'Vault Job',reward:32,risk:7}
 ];
 const EXTRA_TIERS=[
-  {name:'Night Courier',reward:12,diffs:[12,13,14]},
-  {name:'Black Market',reward:19,diffs:[15,18,19]},
-  {name:'Harbor Exchange',reward:16,diffs:[14,16,17]},
-  {name:'Diamond Heist',reward:27,diffs:[19,22,24]}
+  {name:'Night Courier',reward:12,risk:1},
+  {name:'Black Market',reward:19,risk:4},
+  {name:'Harbor Exchange',reward:16,risk:3},
+  {name:'Diamond Heist',reward:27,risk:6}
 ];
-function contractCount(n){return n>=11?8:n>=5?6:4;}
+function contractCount(n){return n>=12?6:n>=10?5:n>=8?4:3;}
 
 const sum=a=>a.reduce((x,y)=>x+y,0);
 const rnd=n=>Math.floor(Math.random()*n);
@@ -276,19 +276,35 @@ function validReveal(rv){
     && (rv.boost===0||rv.boost===1)
     && typeof rv.salt==='string' && /^[0-9a-f]{8,32}$/.test(rv.salt);
 }
+function adaptiveDifficulty(n,c,risk){
+  // 7 is the average two-dice roll; 3 is a typical cooperating energy spend.
+  // Only 60% of the other players' evenly distributed expected contribution is counted.
+  return Math.round(7+3*(1+0.6*(n-1)/c)+risk);
+}
 function genContracts(n=6){
-  // 2-4 players: 4 contracts; 5-10: 6; 11-15: 8.
-  const band=n>=11?2:n>=5?1:0;
-  const pool=TIERS.concat(EXTRA_TIERS).map(t=>({name:t.name,reward:t.reward,diff:t.diffs[band]}));
   const count=contractCount(n);
-  const chosen=shuffle(pool).slice(0,count).sort((a,b)=>a.diff-b.diff);
-  // Small variation keeps successive rounds from becoming identical.
-  return chosen.map(t=>({name:t.name,reward:t.reward+rnd(3)-1,diff:t.diff+rnd(3)-1}));
+  const pool=TIERS.concat(EXTRA_TIERS).sort((a,b)=>a.risk-b.risk);
+  // Always offer an approachable contract, plus a spread of increasingly risky jobs.
+  // Rotate which job appears within each risk range across rounds.
+  const selected=[];
+  for(let i=0;i<count;i++){
+    const low=Math.floor(i*pool.length/count);
+    const high=Math.floor((i+1)*pool.length/count)-1;
+    selected.push(pool[low+rnd(high-low+1)]);
+  }
+  return selected.map(t=>({name:t.name,reward:t.reward+rnd(3)-1,
+    diff:Math.max(8,adaptiveDifficulty(n,count,t.risk)+rnd(3)-1)}))
+    .sort((a,b)=>a.diff-b.diff);
 }
 // 'Contributions' means effective cooperative energy (including seal boosts).
-// Only decisive sabotage pays: the job must have succeeded without sabotage.
+// Full bounty for decisive sabotage; small capped disruption reward for other failed jobs with cooperators.
 function betrayalPayout(contractReward,coopEnergy,round){
   return Math.max(0,Math.round((BETRAYAL_K-contractReward+coopEnergy)/2*roundMultiplier(round)));
+}
+function disruptionPayout(contractReward,coopEnergy,round){
+  // No reward for empty contracts or when all players betray.
+  // Lower than the decisive bounty, so timing sabotage still matters.
+  return Math.max(1,Math.min(4,Math.round(betrayalPayout(contractReward,coopEnergy,round)*0.25)));
 }
 function odds(n){ // chance two dice reach n
   let c=0; for(let a=1;a<=6;a++) for(let b=1;b<=6;b++) if(a+b>=n) c++;
@@ -302,11 +318,17 @@ function phaseOf(g,r,mv){
   return 'results';
 }
 function split(reward,coop){
+  // Split the reward in hundredths of a coin so equal contributions receive equal shares.
   const tot=sum(coop.map(p=>p.eff));
-  const base=coop.map((p,i)=>{const x=reward*p.eff/tot,fl=Math.floor(x+1e-9);return {uid:p.uid,fl,fr:x-fl,i};});
-  let left=reward-sum(base.map(b=>b.fl));
-  base.slice().sort((a,b)=>b.fr-a.fr||a.i-b.i).forEach(b=>{if(left>0){b.fl++;left--;}});
-  const pay={}; base.forEach(b=>{pay[b.uid]=b.fl;}); return pay;
+  if(!tot) return {};
+  const cents=Math.round(reward*100);
+  const base=coop.map((p,i)=>{
+    const exact=cents*p.eff/tot, whole=Math.floor(exact+1e-9);
+    return {uid:p.uid,whole,frac:exact-whole,i};
+  });
+  let left=cents-sum(base.map(b=>b.whole));
+  base.slice().sort((a,b)=>b.frac-a.frac||a.i-b.i).forEach(b=>{if(left>0){b.whole++;left--;}});
+  const pay={}; base.forEach(b=>{pay[b.uid]=b.whole/100;}); return pay;
 }
 function resolveRound(g,r,act,mv,coins,tokens){
   const contracts=g['contracts_'+r]||[];
@@ -335,11 +357,12 @@ function resolveRound(g,r,act,mv,coins,tokens){
     const success=coop.length>0 && total>=need;
     const wouldHave=coop.length>0 && total>=c.diff;
     let pay={}, seals=[];
-    if(success) pay=split(Math.round(c.reward*roundMultiplier(r)),coop);
-    else if(wouldHave && bet.length){
-      const bounty=betrayalPayout(c.reward,coopE,r);
-      // Each saboteur receives the advertised bounty, and one reputation seal.
-      bet.forEach(p=>{pay[p.uid]=bounty;seals.push(p.uid);});
+    if(success) pay=split(c.reward*roundMultiplier(r),coop);
+    else if(bet.length && coop.length){
+      const decisive=wouldHave;
+      const bounty=decisive?betrayalPayout(c.reward,coopE,r):disruptionPayout(c.reward,coopE,r);
+      // Only decisive sabotage earns reputation seals.
+      bet.forEach(p=>{pay[p.uid]=bounty;if(decisive)seals.push(p.uid);});
     }
     Object.keys(pay).forEach(u=>{coins[u]+=pay[u]; dC[u]+=pay[u];});
     seals.forEach(u=>{tokens[u]+=1; dT[u]+=1;});
@@ -537,7 +560,7 @@ const ACT={
       used[n.toLowerCase()]=1; names[p.uid]=n;
     });
     await guard(()=>db.doc('games/'+code).update({
-      status:'playing',rulesVersion:2,round:1,order:list.map(p=>p.uid),names,contracts_1:genContracts(list.length),startedAt:Date.now()
+      status:'playing',rulesVersion:3,round:1,order:list.map(p=>p.uid),names,contracts_1:genContracts(list.length),startedAt:Date.now()
     }));
   },
   bots(n){ui.bots=+n;render();},
@@ -661,7 +684,9 @@ function botMove(u){
         const withSab=diceChance(c.diff+energy-coopExpected);
         const decisive=Math.max(0,without-withSab);
         const bounty=betrayalPayout(c.reward,coopExpected,r);
-        let betEV=decisive*bounty-energy;
+        const failWithSab=1-withSab;
+        const small=disruptionPayout(c.reward,coopExpected,r);
+        let betEV=decisive*bounty+Math.max(0,failWithSab-decisive)*small-energy;
         if(style==='shark')betEV+=1.6;
         if(style==='steady')betEV-=1.5;
         if(style==='grudge'){
@@ -708,7 +733,7 @@ async function startPractice(){
   const nb=Math.max(1,Math.min(14,ui.bots||4)), c='PR'+randHex(4), pool=shuffle(BOT_NAMES), styles=shuffle(BOT_STYLES);
   const names={you:me}, order=['you'];
   for(let i=1;i<=nb;i++){const b='bot_'+i; order.push(b); names[b]=pool[i-1]; botStyle[b]=styles[(i-1)%styles.length];}
-  await db.doc('games/'+c).set({code:c,hostId:'you',status:'playing',rulesVersion:2,round:1,total:ROUNDS,createdAt:Date.now(),seed:randHex(24),kicked:{},order,names,contracts_1:genContracts(order.length)});
+  await db.doc('games/'+c).set({code:c,hostId:'you',status:'playing',rulesVersion:3,round:1,total:ROUNDS,createdAt:Date.now(),seed:randHex(24),kicked:{},order,names,contracts_1:genContracts(order.length)});
   enterRoom(c);
 }
 
@@ -774,7 +799,7 @@ function lobby(){
     <p class="note">Send people this page plus the code. Anyone who joins before you start gets a seat.</p></section>
   <section class="sheet"><h2>At the table <span class="chip">${n}</span></h2>
     <ul class="roster">${list.map(p=>`<li><span class="pn">${esc(p.name)}</span>${p.uid===game.hostId?'<span class="chip">host</span>':''}${p.uid===uid?'<span class="chip me">you</span>':''}</li>`).join('')}</ul>
-    ${n<4||n>6?'<p class="note">Contracts scale with lobby size: 4 (2–4 players), 6 (5–10), 8 (11–15).</p>':''}
+    ${n<4||n>6?'<p class="note">Contracts scale with lobby size: 3 (2–7 players), 4 (8–9), 5 (10–11), 6 (12–15).</p>':''}
     ${host?`<div><button class="btn primary" data-act="start"${n<2||n>15||ui.busy?' disabled':''}>Start the game</button></div>${n<2?'<p class="note">Waiting for at least one more player.</p>':n>15?'<p class="note">Maximum 15 players. Remove extra players before starting.</p>':''}`:'<p class="note">Waiting for the host to start the game.</p>'}
   </section>`;
 }
@@ -819,7 +844,7 @@ function contractSlip(c,i){
   const sel=ui.contract===i;
   return `<button class="slip slip-btn" data-act="pick" data-arg="${i}" aria-pressed="${sel}">
     <span class="slip-h"><h4>${esc(c.name)}</h4>${sel?'<span class="tag">Chosen</span>':''}</span>
-    <span class="meta">Base reward ${c.reward} &middot; Difficulty ${c.diff} &middot; Round payout ${Math.round(c.reward*roundMultiplier(game.round))}</span>
+    <span class="meta">Base reward ${c.reward} &middot; Difficulty ${c.diff} &middot; Round payout ${(c.reward*roundMultiplier(game.round)).toFixed(2)}</span>
     <span class="note">Dice alone reach it ${odds(c.diff)}% of the time</span></button>`;
 }
 function actionForm(){
@@ -831,7 +856,7 @@ function actionForm(){
     <div><p class="step">Step 2</p><h2>Help it or sink it</h2></div>
     <div class="modes">
       <button class="mode c" data-act="mode" data-arg="C" aria-pressed="${ui.mode==='C'}"><strong>Cooperate</strong><span>Your energy pushes the dice total up. Share the reward if it works.</span></button>
-      <button class="mode b" data-act="mode" data-arg="B" aria-pressed="${ui.mode==='B'}"><strong>Betray</strong><span>Your energy raises difficulty. Earn a bounty only if sabotage causes failure.</span></button>
+      <button class="mode b" data-act="mode" data-arg="B" aria-pressed="${ui.mode==='B'}"><strong>Betray</strong><span>Your energy raises difficulty. Earn a full bounty for decisive sabotage, or a smaller payout for disrupting a failed contract with cooperators.</span></button>
     </div>
     <div><p class="step">Step 3</p><h2>Energy to invest</h2><p class="note">Each point costs 1 coin.</p></div>
     <div class="seg" role="group" aria-label="Energy">${[1,2,3,4,5].map(n=>`<button data-act="energy" data-arg="${n}" aria-pressed="${ui.energy===n}">${n}</button>`).join('')}</div>
@@ -904,9 +929,9 @@ function rulesHTML(){
   return `<div class="modal-card"><div class="modal-head"><h2>How Blind Pact works</h2><button class="btn small" data-close="1" id="closeRules">Close</button></div>
   <p class="lead">Eight rounds. Everyone backs a contract in secret and puts energy behind it, either to help it succeed or to sink it. Most coins after round 8 wins.</p>
   <h3>Setup</h3><ul>
-    <li>Designed for 2 to 15 players: 4 contracts for 2–4 players, 6 for 5–10, and 8 for 11–15. Contract difficulties scale by room size.</li>
+    <li>Designed for 2 to 15 players: 3 contracts for 2–7 players, 4 for 8–9, 5 for 10–11, and 6 for 12–15. Contract difficulties scale with active players and contract count.</li>
     <li>Everyone starts with 10 coins and receives 5 more at the start of every round.</li>
-    <li>Each round offers 4, 6, or 8 contracts depending on room size. Contract difficulties adjust for lobby size; every contract has its own reward and difficulty.</li>
+    <li>Each round offers the contract count shown above. Difficulties are recalculated from the active player count, the number of contracts, and each contract’s risk. Lower-risk jobs are easier and higher-reward jobs are harder.</li>
     <li>You get 5 energy points each round. Two six-sided dice add randomness.</li></ul>
   <h3>Each round</h3><ol>
     <li>Secretly choose one contract. Several players can choose the same one.</li>
@@ -916,14 +941,15 @@ function rulesHTML(){
     <li>A betrayer's energy raises the contract's difficulty instead of helping it.</li></ol>
   <h3>Payouts</h3><ul>
     <li><b>Success:</b> the contract reward, multiplied by the visible round multiplier, is split among cooperators in proportion to effective energy. Betrayers earn nothing.</li>
-    <li><b>Decisive betrayal:</b> if a contract would have succeeded without sabotage but fails because of it, each betrayer earns a bounty: round((30 − base contract reward + total cooperative effective energy) / 2 × round multiplier). Otherwise betrayal pays zero. Energy still costs coins.</li>
-    <li><b>Reputation:</b> every successful betrayal, meaning one that makes the contract fail, earns one seal. Two seals can be traded in once for +3 energy, on a cooperating move or a sabotaging one.</li></ul>
+    <li><b>Decisive betrayal:</b> if a contract would have succeeded without sabotage but fails because of it, each betrayer earns a bounty: round((30 − base contract reward + total cooperative effective energy) / 2 × round multiplier). If sabotage is not decisive but the contract fails and at least one player cooperated, each betrayer receives a smaller disruption payout (25% of the full bounty, capped at 4 coins). Betrayal pays zero on successful contracts or contracts with no cooperators. Energy still costs coins.</li>
+    <li><b>Reputation:</b> every decisive betrayal earns one seal. Two seals can be traded in once for +3 energy, on a cooperating move or a sabotaging one.</li></ul>
   <h3>Winning</h3><p>After 8 rounds, the player with the most coins wins.</p>
   <h3>Details this version settles</h3><ul>
-    <li>Eight contract types rotate between rounds. The number offered depends on lobby size (4, 6, or 8). Base rewards and difficulties each vary by ±1 each round.</li>
-    <li>A betrayal is decisive when at least one player cooperated and the contract would have succeeded without sabotage but fails with sabotage.</li>
+    <li>Eight contract types rotate between rounds, with a mix of low- and high-risk choices. There are 3, 4, 5, or 6 choices depending on player count. Rewards and calculated difficulties each vary by ±1 each round.</li>
+    <li>Difficulty is calculated as round(7 + 3 × (1 + 0.6 × (active players − 1) / contracts) + risk), then varied by at most 1. The average two-dice roll is 7; risk ranges from 0 to 7. Fewer players generally means lower difficulties.</li>
+    <li>A betrayal is decisive when at least one player cooperated and the contract would have succeeded without sabotage but fails with sabotage. Non-decisive disruption earns no reputation seal.</li>
     <li>The seal boost is chosen when you seal your move. It costs no coins. Its +3 counts toward your share of a reward or toward sabotage.</li>
-    <li>Rewards are paid in whole coins. The cooperation pool is rounded after applying the multiplier, then split proportionally. Bounties are rounded to whole coins.</li>
+    <li>Cooperation rewards can include fractional coins (up to two decimal places). The reward pool is multiplied by the round multiplier and shared in proportion to effective cooperative energy. Equal contributions receive equal shares whenever the amount can be divided exactly to two decimal places; any indivisible 0.01 remainder is allocated deterministically. Betrayal bounties remain rounded to whole coins.</li>
     <li>Players tied on coins at the end share the win.</li></ul>
   <h3>Dice odds</h3><p class="note">Chance two dice alone reach a total:</p><div class="odds">${od.join('')}</div>
   <h3>Why nobody can peek or cheat the dice</h3><p>Each move is locked with a fingerprint before anyone sees it, then opened and checked against that fingerprint. The dice are worked out from every player's secret salt, so no single person controls them.</p></div>`;
