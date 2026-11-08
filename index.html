@@ -84,6 +84,12 @@ label{font:600 .85rem var(--body)}
 .chip{font:500 .72rem var(--mono);padding:2px 9px;border:1px solid var(--rule);border-radius:99px;color:var(--muted);white-space:nowrap;display:inline-block}
 .chip.ok{border-color:var(--ok);color:var(--ok)}
 .chip.off{border-style:dashed}
+.sigline{color:var(--gold)}
+.chip.sig{border-color:var(--gold);color:var(--gold);white-space:normal}
+.seg.sig{grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
+.seg.sig button,.seg.sigm button{font:600 .85rem var(--body);padding:.55rem .4rem}
+.seg.sigm{grid-template-columns:1fr 1fr}
+.sigbox{border-top:1px dashed var(--rule);padding-top:14px;display:grid;gap:10px}
 .chip.me{border-color:var(--pen);color:var(--pen)}
 
 /* round bar */
@@ -184,11 +190,24 @@ details > .slips,details > p{margin:0 14px 14px}
 .odds span{font:500 .8rem var(--mono);border:1px solid var(--rule);padding:3px 8px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:8px 16px;font:500 .85rem var(--mono);z-index:60}
 
+
+/* choice timer */
+.timer{display:grid;gap:6px}
+.timer-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+#tnum{font:600 1.35rem var(--mono);font-variant-numeric:tabular-nums}
+#tnum.low{color:var(--stamp)}
+.timer-track{height:10px;border:1.5px solid var(--ink);background:var(--card)}
+.timer-bar{height:100%;background:var(--ink);transition:width .25s linear}
+.timer-bar.low{background:var(--stamp)}
+.recap{margin:0;padding-left:1.2rem;display:grid;gap:5px}
+.introbtns{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
 @keyframes thump{0%{transform:rotate(-5deg) scale(1.9);opacity:0}70%{transform:rotate(-5deg) scale(.96);opacity:1}100%{transform:rotate(-5deg) scale(1)}}
 @keyframes tumble{0%{transform:rotate(-260deg) translateY(-18px);opacity:0}100%{transform:none;opacity:1}}
 @media (prefers-reduced-motion: reduce){
   .rolling .die,.thump .stamp,.stamp.thump{animation:none}
   .btn{transition:none}
+  .timer-bar{transition:none}
 }
 @media (max-width:480px){
   .modes{grid-template-columns:1fr}
@@ -198,7 +217,7 @@ details > .slips,details > p{margin:0 14px 14px}
 </style>
 
 <div id="app"></div>
-<div id="modal" class="modal" role="dialog" aria-modal="true" aria-label="Rules" hidden></div>
+<div id="modal" class="modal" role="dialog" aria-modal="true" aria-label="Game guide" hidden></div>
 <div id="toast"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
@@ -207,8 +226,15 @@ details > .slips,details > p{margin:0 14px 14px}
 <script>
 //#LOGIC-START
 const ROUNDS=8, START_COINS=10, INCOME=5;
-// V10 adaptive difficulty: player-count and contract-count aware; original-backup remains on GitHub.
+const CHOICE_SECONDS=45; // time each player gets to choose; the move is sealed automatically at zero
+// V12: timer, whole-number coins, non-linear risk bonus. original-backup remains on GitHub.
 const BETRAYAL_K=30;
+// Risk bonus: riskier contracts pay somewhat more (gently convex, 1.00x up to 1.25x). Most of the
+// reward growth already comes from the base reward; this just adds a small premium for risk.
+// Tuned with a player-behaviour simulation so every contract keeps getting picked.
+const RISK_MULT=[1,1.01,1.04,1.07,1.11,1.15,1.2,1.25];
+// Betrayal bounties keep using the contract's base reward so sabotage economics are unchanged.
+const baseOf=c=>c.base!=null?c.base:c.reward;
 const ROUND_MULTIPLIERS=[1,1,1.1,1.1,1.2,1.2,1.3,1.4];
 const roundMultiplier=r=>ROUND_MULTIPLIERS[Math.max(0,Math.min(ROUNDS-1,r-1))];
 // Each contract keeps its reward and distinct risk. Difficulty is calculated afresh
@@ -279,7 +305,8 @@ function validReveal(rv){
 function adaptiveDifficulty(n,c,risk){
   // 7 is the average two-dice roll; 3 is a typical cooperating energy spend.
   // Only 60% of the other players' evenly distributed expected contribution is counted.
-  return Math.round(7+3*(1+0.6*(n-1)/c)+risk);
+  // Risk only adds 0.7 difficulty per level, so the hardest contract stays within reach of a coordinated table.
+  return Math.round(7+3*(1+0.6*(n-1)/c)+0.7*risk);
 }
 function genContracts(n=6){
   const count=contractCount(n);
@@ -292,23 +319,28 @@ function genContracts(n=6){
     const high=Math.floor((i+1)*pool.length/count)-1;
     selected.push(pool[low+rnd(high-low+1)]);
   }
-  return selected.map(t=>({name:t.name,reward:t.reward+rnd(3)-1,
-    diff:Math.max(8,adaptiveDifficulty(n,count,t.risk)+rnd(3)-1)}))
-    .sort((a,b)=>a.diff-b.diff);
+  const list=selected.map(t=>{
+    const base=t.reward+rnd(3)-1, mult=RISK_MULT[t.risk]||1;
+    return {name:t.name,base,mult,reward:Math.round(base*mult),
+      diff:Math.max(8,adaptiveDifficulty(n,count,t.risk)+rnd(3)-1)};
+  });
+  // 'selected' is in rising-risk order. Random jitter must never let a riskier contract be as easy
+  // as (or easier than) a safer one, otherwise it would simply be the better choice.
+  list.forEach((c,i)=>{ if(i>0){ if(c.diff<=list[i-1].diff) c.diff=list[i-1].diff+1; if(c.reward<=list[i-1].reward) c.reward=list[i-1].reward+1; } });
+  return list;
 }
 // 'Contributions' means effective cooperative energy (including seal boosts).
 // Full bounty for decisive sabotage; small capped disruption reward for other failed jobs with cooperators.
-function betrayalPayout(contractReward,coopEnergy,round){
-  return Math.max(0,Math.round((BETRAYAL_K-contractReward+coopEnergy)/2*roundMultiplier(round)));
+function betrayalPayout(contractReward,coopEnergy,round,betEnergy=0){
+  // V14: the bounty depends on three things: your own energy (refunded in full when your sabotage is
+  // decisive), the contract's base reward, and the cooperating energy you destroyed. It is a POOL
+  // shared by all decisive betrayers in proportion to their energy.
+  return Math.max(1,betEnergy+Math.round((0.3*contractReward+0.4*coopEnergy)*roundMultiplier(round)));
 }
-function disruptionPayout(contractReward,coopEnergy,round){
-  // No reward for empty contracts or when all players betray.
-  // Lower than the decisive bounty, so timing sabotage still matters.
-  return Math.max(1,Math.min(4,Math.round(betrayalPayout(contractReward,coopEnergy,round)*0.25)));
-}
-function odds(n){ // chance two dice reach n
-  let c=0; for(let a=1;a<=6;a++) for(let b=1;b<=6;b++) if(a+b>=n) c++;
-  return Math.round(c/36*100);
+function disruptionPayout(contractReward,coopEnergy,round,betEnergy=0){
+  // The job was going to fail anyway: half of the betrayers' energy comes back, plus a small share of
+  // the reward and of the cooperating energy wasted. Shared among betrayers by energy.
+  return Math.max(1,Math.round(0.5*betEnergy+roundMultiplier(round)*(0.2*coopEnergy+0.1*contractReward)));
 }
 function activeAt(g,r){ const k=g.kicked||{}; return (g.order||[]).filter(u=>!(k[u]&&k[u]<=r)); }
 function phaseOf(g,r,mv){
@@ -317,18 +349,19 @@ function phaseOf(g,r,mv){
   if(act.some(u=>!mv[r+'-'+u].reveal)) return 'reveal';
   return 'results';
 }
-function split(reward,coop){
-  // Split the reward in hundredths of a coin so equal contributions receive equal shares.
+function split(pool,coop,tieSeed){
+  // Whole-coin split in proportion to effective energy (largest remainder).
+  // Leftover coins go to the biggest remainders; exact ties are broken by a hash of the shared
+  // game seed, so equal contributions are treated fairly and every browser gets the same answer.
   const tot=sum(coop.map(p=>p.eff));
-  if(!tot) return {};
-  const cents=Math.round(reward*100);
-  const base=coop.map((p,i)=>{
-    const exact=cents*p.eff/tot, whole=Math.floor(exact+1e-9);
-    return {uid:p.uid,whole,frac:exact-whole,i};
+  if(!tot||pool<=0) return {};
+  const parts=coop.map(p=>{
+    const exact=pool*p.eff/tot, whole=Math.floor(exact+1e-9);
+    return {uid:p.uid,whole,frac:exact-whole,tie:parseInt(sha256(tieSeed+'|'+p.uid).substr(0,8),16)};
   });
-  let left=cents-sum(base.map(b=>b.whole));
-  base.slice().sort((a,b)=>b.frac-a.frac||a.i-b.i).forEach(b=>{if(left>0){b.whole++;left--;}});
-  const pay={}; base.forEach(b=>{pay[b.uid]=b.whole/100;}); return pay;
+  let left=pool-sum(parts.map(b=>b.whole));
+  parts.slice().sort((a,b)=>(b.frac-a.frac)||(a.tie-b.tie)).forEach(b=>{if(left>0){b.whole++;left--;}});
+  const pay={}; parts.forEach(b=>{pay[b.uid]=b.whole;}); return pay;
 }
 function resolveRound(g,r,act,mv,coins,tokens){
   const contracts=g['contracts_'+r]||[];
@@ -357,12 +390,15 @@ function resolveRound(g,r,act,mv,coins,tokens){
     const success=coop.length>0 && total>=need;
     const wouldHave=coop.length>0 && total>=c.diff;
     let pay={}, seals=[];
-    if(success) pay=split(c.reward*roundMultiplier(r),coop);
+    if(success) pay=split(Math.round(c.reward*roundMultiplier(r)),coop,seed+'|'+i);
     else if(bet.length && coop.length){
       const decisive=wouldHave;
-      const bounty=decisive?betrayalPayout(c.reward,coopE,r):disruptionPayout(c.reward,coopE,r);
+      const betReal=sum(bet.map(p=>p.energy));
+      const bounty=decisive?betrayalPayout(baseOf(c),coopE,r,betReal):disruptionPayout(baseOf(c),coopE,r,betReal);
       // Only decisive sabotage earns reputation seals.
-      bet.forEach(p=>{pay[p.uid]=bounty;if(decisive)seals.push(p.uid);});
+      // The bounty is a shared pool split among betrayers by effective energy (not paid in full to each).
+      pay=split(bounty,bet.map(p=>({uid:p.uid,eff:p.eff})),seed+'|b'+i);
+      if(decisive) bet.forEach(p=>seals.push(p.uid));
     }
     Object.keys(pay).forEach(u=>{coins[u]+=pay[u]; dC[u]+=pay[u];});
     seals.forEach(u=>{tokens[u]+=1; dT[u]+=1;});
@@ -421,6 +457,18 @@ const PIPS={1:[5],2:[1,9],3:[1,5,9],4:[1,3,7,9],5:[1,3,5,7,9],6:[1,3,4,6,7,9]};
 const die=n=>`<span class="die" role="img" aria-label="die showing ${n}">${[1,2,3,4,5,6,7,8,9].map(i=>`<i${PIPS[n].includes(i)?' class="on"':''}></i>`).join('')}</span>`;
 const seals=n=>n>0?`<span class="seals" role="img" aria-label="${n} reputation seal${n>1?'s':''}">${'<i></i>'.repeat(Math.min(n,6))}${n>6?'<small>+</small>':''}</span>`:'<span class="seals note" aria-label="no seals">–</span>';
 const signed=d=>d>0?'+'+d:d<0?'−'+Math.abs(d):'±0';
+// Table signals: public, optional, non-binding. Stored on the player doc as sig_<round> = {c:contractIndex, m:'C'|'B'}.
+// A signal means "I'm backing this contract, join me" (it can be a lie). Players finish signalling first
+// (sigdone_<round>), signals are revealed all at once, then everyone seals.
+const SIGNAL_SECONDS=15;
+function sigOf(u,r){const p=players[u], s=p&&p['sig_'+r]; return s&&s.c!=null?s:null;}
+function sigText(s,r){const c=(game['contracts_'+r]||[])[s.c]; return esc(c?c.name:'a contract');}
+function allSigDone(r){return !!game&&activeAt(game,r).every(u=>players[u]&&players[u]['sigdone_'+r]);}
+function sigChip(u,r,phase){
+  if(phase!=='choose'&&phase!=='reveal') return '';
+  if(!allSigDone(r)) return '';
+  const s=sigOf(u,r); return s?` <span class="chip sig">backing ${sigText(s,r)}</span>`:'';
+}
 
 function toast(msg){ui.toast=msg;paintToast();setTimeout(()=>{if(ui.toast===msg){ui.toast='';paintToast();}},1800);}
 function paintToast(){$('#toast').innerHTML=ui.toast?`<div class="toast" role="status">${esc(ui.toast)}</div>`:'';}
@@ -471,7 +519,7 @@ function refresh(){
   if(game&&game.status!=='lobby'&&(game.order||[]).length&&game.round>0){
     try{st=computeState(game,moves);}catch(e){console.error(e);}
     if(ui.forRound!==game.round){
-      ui.forRound=game.round; ui.contract=null; ui.mode=null; ui.energy=3; ui.boost=false; ui.kickAsk=null;
+      ui.forRound=game.round; ui.contract=null; ui.mode=null; ui.energy=3; ui.boost=false; ui.kickAsk=null; ui.sigC=null; ui.sigM=null;
     }
     maybeReveal();
     const cur=st&&st.rounds[game.round-1];
@@ -502,8 +550,61 @@ function maybeReveal(){
 }
 
 /* ----- actions ----- */
+/* ----- choice timer ----- */
+// Each browser starts its own countdown the first time it shows the choosing screen for a round
+// (saved in localStorage so a reload doesn't restart it). This avoids clock differences between devices.
+const deadlines={}, autoSent={};
+function deadlineFor(r){
+  const key=code+':'+r;
+  if(deadlines[key]) return deadlines[key];
+  let d=+ls.get('bp:d:'+key)||0;
+  if(!d){d=Date.now()+CHOICE_SECONDS*1000; ls.set('bp:d:'+key,String(d));}
+  deadlines[key]=d; return d;
+}
+const fmtTime=s=>Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
+function autoSeal(){
+  if(!game||!code||!st||game.status!=='playing') return;
+  const r=game.round, key=code+':'+r, cur=st.rounds[r-1];
+  if(autoSent[key]||ui.busy||moves[r+'-'+uid]) return;
+  if(!cur||cur.phase!=='choose'||!activeAt(game,r).includes(uid)) return;
+  autoSent[key]=1; setTimeout(()=>{delete autoSent[key];},5000);
+  // Defaults for anything left unchosen: easiest contract (list is sorted easiest first) and Cooperate.
+  if(ui.contract==null) ui.contract=0;
+  if(!ui.mode) ui.mode='C';
+  toast("Time's up: your move was sealed for you");
+  ACT.seal();
+}
+function tickTimer(){
+  const sn=document.getElementById('snum');
+  if(sn&&game&&code){
+    const dl=deadlines[code+':s'+game.round];
+    if(dl){
+      const ms=dl-Date.now(), left=Math.max(0,Math.ceil(ms/1000)), low=left<=5;
+      sn.textContent=fmtTime(left); sn.classList.toggle('low',low);
+      const sb=document.getElementById('sbar');
+      if(sb){sb.style.width=Math.max(0,Math.min(100,ms/(SIGNAL_SECONDS*10)))+'%'; sb.classList.toggle('low',low);}
+      if(left<=0){
+        const r=game.round, k=code+':sig'+r;
+        if(!autoSent[k]&&!ui.busy){
+          autoSent[k]=1; setTimeout(()=>{delete autoSent[k];},5000);
+          if(ui.sigC!=null) ACT.signal(); else ACT.sigskip();
+        }
+      }
+    }
+  }
+  const n=document.getElementById('tnum'); if(!n||!game||!code) return;
+  const dl=deadlines[code+':'+game.round]; if(!dl) return;
+  const ms=dl-Date.now(), left=Math.max(0,Math.ceil(ms/1000)), low=left<=10;
+  n.textContent=fmtTime(left); n.classList.toggle('low',low);
+  const bar=document.getElementById('tbar');
+  if(bar){bar.style.width=Math.max(0,Math.min(100,ms/(CHOICE_SECONDS*10)))+'%'; bar.classList.toggle('low',low);}
+  if(left<=0) autoSeal();
+}
+setInterval(tickTimer,250);
+
 const ACT={
   rules(){openRules();},
+  intro(){openIntro();},
   dismiss(){ui.err='';render();},
   leave(){
     const g=game, c=code;
@@ -560,7 +661,7 @@ const ACT={
       used[n.toLowerCase()]=1; names[p.uid]=n;
     });
     await guard(()=>db.doc('games/'+code).update({
-      status:'playing',rulesVersion:3,round:1,order:list.map(p=>p.uid),names,contracts_1:genContracts(list.length),startedAt:Date.now()
+      status:'playing',rulesVersion:4,round:1,order:list.map(p=>p.uid),names,contracts_1:genContracts(list.length),startedAt:Date.now()
     }));
   },
   bots(n){ui.bots=+n;render();},
@@ -568,6 +669,17 @@ const ACT={
   pick(i){ui.contract=+i;render();},
   mode(m){ui.mode=m;render();},
   energy(n){ui.energy=+n;render();},
+  sigc(i){ui.sigC=+i;render();},
+  async signal(){
+    const r=game.round;
+    if(ui.sigC==null||moves[r+'-'+uid]||(players[uid]&&players[uid]['sigdone_'+r])) return;
+    await guard(()=>db.doc(pid(code,uid)).set({code,uid,['sig_'+r]:{c:ui.sigC},['sigdone_'+r]:true},{merge:true}));
+  },
+  async sigskip(){
+    const r=game.round;
+    if(moves[r+'-'+uid]||(players[uid]&&players[uid]['sigdone_'+r])) return;
+    await guard(()=>db.doc(pid(code,uid)).set({code,uid,['sigdone_'+r]:true},{merge:true}));
+  },
   async seal(){
     const r=game.round;
     if(ui.contract==null||!ui.mode||moves[r+'-'+uid]) return;
@@ -630,7 +742,7 @@ function makeFakeDb(){
   const docRef=p=>({
     id:p.split('/').pop(),path:p,
     get:async()=>dsnap(p),
-    set:async d=>{store[p]=clone(d);notify();},
+    set:async(d,o)=>{if(o&&o.merge&&p in store) merge(store[p],d); else store[p]=clone(d); notify();},
     update:async d=>{if(!(p in store)) throw {code:'invalid_argument'}; merge(store[p],d); notify();},
     delete:async()=>{delete store[p];notify();},
     onSnapshot:next=>listen(()=>next(dsnap(p)))
@@ -683,9 +795,9 @@ function botMove(u){
         const without=diceChance(c.diff-coopExpected);
         const withSab=diceChance(c.diff+energy-coopExpected);
         const decisive=Math.max(0,without-withSab);
-        const bounty=betrayalPayout(c.reward,coopExpected,r);
+        const bounty=betrayalPayout(baseOf(c),coopExpected,r,energy);
         const failWithSab=1-withSab;
-        const small=disruptionPayout(c.reward,coopExpected,r);
+        const small=disruptionPayout(baseOf(c),coopExpected,r,energy);
         let betEV=decisive*bounty+Math.max(0,failWithSab-decisive)*small-energy;
         if(style==='shark')betEV+=1.6;
         if(style==='steady')betEV-=1.5;
@@ -713,9 +825,21 @@ function botsTick(){
   game.order.forEach(u=>{
     if(u.indexOf('bot_')!==0||!act.includes(u)) return;
     const key=c+':'+r+':'+u, m=moves[r+'-'+u];
-    if(ph==='choose'&&!m&&!botBusy[key]){
-      botBusy[key]=1;
+    if(ph==='choose'&&!m&&!botDone[key+'s']){
+      // Bots signal first (some mostly honest, some bluffing), then wait for everyone before sealing.
+      botDone[key+'s']=1;
       const rv=botMove(u); botPending[key]=rv;
+      const sty=botStyle[u]||'wild', cl=game['contracts_'+r]||[];
+      const backing=rv.mode==='C';
+      let sg=null;
+      if(backing&&rnd(100)<(sty==='steady'?85:60)) sg={c:rv.contract};
+      else if(!backing&&rnd(100)<(sty==='shark'?65:35)) sg={c:rnd(Math.max(1,cl.length))};
+      const data={code:c,uid:u,['sigdone_'+r]:true}; if(sg) data['sig_'+r]=sg;
+      setTimeout(()=>{if(practice&&code===c) d.doc(pid(c,u)).set(data,{merge:true});},400+rnd(1200));
+    }
+    if(ph==='choose'&&!m&&!botBusy[key]&&botDone[key+'s']&&allSigDone(r)){
+      botBusy[key]=1;
+      const rv=botPending[key];
       const commit=sha256(canon(c,r,u,rv));
       setTimeout(()=>{if(practice&&code===c) d.doc(mid(c,r,u)).set({code:c,round:r,uid:u,commit,sealedAt:Date.now()});},500+rnd(1600));
     }
@@ -733,7 +857,7 @@ async function startPractice(){
   const nb=Math.max(1,Math.min(14,ui.bots||4)), c='PR'+randHex(4), pool=shuffle(BOT_NAMES), styles=shuffle(BOT_STYLES);
   const names={you:me}, order=['you'];
   for(let i=1;i<=nb;i++){const b='bot_'+i; order.push(b); names[b]=pool[i-1]; botStyle[b]=styles[(i-1)%styles.length];}
-  await db.doc('games/'+c).set({code:c,hostId:'you',status:'playing',rulesVersion:3,round:1,total:ROUNDS,createdAt:Date.now(),seed:randHex(24),kicked:{},order,names,contracts_1:genContracts(order.length)});
+  await db.doc('games/'+c).set({code:c,hostId:'you',status:'playing',rulesVersion:4,round:1,total:ROUNDS,createdAt:Date.now(),seed:randHex(24),kicked:{},order,names,contracts_1:genContracts(order.length)});
   enterRoom(c);
 }
 
@@ -748,14 +872,15 @@ function draw(){
   catch(err){console.error(err);body='<section class="sheet"><p>Something broke while drawing this screen. Reload the page and you will rejoin your room.</p></section>';}
   const html=`<div class="wrap">${header()}${ui.err?`<div class="banner" role="alert"><span>${esc(ui.err)}</span><button class="btn small" data-act="dismiss">Dismiss</button></div>`:''}${body}</div>`;
   if(html===lastHtml) return;
-  app.innerHTML=html; lastHtml=html;
+  app.innerHTML=html; lastHtml=html; tickTimer();
   app.querySelectorAll('[data-act]').forEach(b=>{b.dataset.fk=b.dataset.act+(b.dataset.arg||'');});
   if(fk){const t=app.querySelector('[data-fk="'+fk+'"]'); if(t) t.focus({preventScroll:true});}
 }
 function header(){
   return `<header class="top"><div class="brand" aria-label="Blind Pact"><span class="redact">BLIND</span> PACT</div>
   <div class="topr">${code?(practice?'<span class="roomtag">Practice vs bots</span>':`<span class="roomtag">Room <b>${esc(code)}</b></span>`):''}
-  <button class="btn small" data-act="rules">Read rules</button>
+  <button class="btn small" data-act="intro">How to play</button>
+  <button class="btn small" data-act="rules">Rules</button>
   ${code?'<button class="btn small" data-act="leave">Leave</button>':''}</div></header>`;
 }
 function screen(){
@@ -788,7 +913,7 @@ function home(){
       <p class="note">${online?'Play a full 8-round game against computer players to check the rules and the feel.':'Online rooms need an internet connection. Practice mode works without it.'}</p>
       <div class="seg allplayers" role="group" aria-label="Number of players">${Array.from({length:14},(_,i)=>i+2).map(n=>`<button data-act="bots" data-arg="${n-1}" aria-pressed="${ui.bots===n-1}">${n} players</button>`).join('')}</div>
       <button class="btn" data-act="practice">Practice with bots</button></div>
-    <p class="note">Built for the KGTS game intra. New here? Press Read rules at the top first.</p>
+    <p class="note">Built for the KGTS game intra. New here? Press <b>How to play</b> at the top first.</p>
   </section>`;
 }
 function lobby(){
@@ -801,6 +926,14 @@ function lobby(){
     <ul class="roster">${list.map(p=>`<li><span class="pn">${esc(p.name)}</span>${p.uid===game.hostId?'<span class="chip">host</span>':''}${p.uid===uid?'<span class="chip me">you</span>':''}</li>`).join('')}</ul>
     ${n<4||n>6?'<p class="note">Contracts scale with lobby size: 3 (2–7 players), 4 (8–9), 5 (10–11), 6 (12–15).</p>':''}
     ${host?`<div><button class="btn primary" data-act="start"${n<2||n>15||ui.busy?' disabled':''}>Start the game</button></div>${n<2?'<p class="note">Waiting for at least one more player.</p>':n>15?'<p class="note">Maximum 15 players. Remove extra players before starting.</p>':''}`:'<p class="note">Waiting for the host to start the game.</p>'}
+  </section>
+  <section class="sheet"><h2>Quick recap while you wait</h2>
+    <ul class="recap">
+      <li>8 rounds. You earn 5 coins each round and the most coins at the end wins.</li>
+      <li>Each round, secretly pick a contract. Harder contracts pay far more.</li>
+      <li><b>Cooperate</b> to help it succeed and share the reward, or <b>Betray</b> to sink it and earn a bounty.</li>
+      <li>Everything opens at once and dice add luck. You get ${CHOICE_SECONDS} seconds to choose.</li></ul>
+    <div><button class="btn small" data-act="intro">Show the full intro</button></div>
   </section>`;
 }
 function gameView(){
@@ -824,35 +957,72 @@ function board(cur,act){
   const rows=order.map(({u,out})=>{
     const m=moves[R+'-'+u]; let status='';
     if(out) status='<span class="chip off">removed</span>';
+    else if(phase==='choose'&&!allSigDone(R)) status=(players[u]&&players[u]['sigdone_'+R])?'<span class="chip ok">signalled</span>':'<span class="chip">signalling</span>';
     else if(phase==='choose') status=(m&&m.commit)?'<span class="chip ok">sealed</span>':'<span class="chip">thinking</span>';
     else if(phase==='reveal') status=(m&&m.reveal)?'<span class="chip ok">opened</span>':'<span class="chip">opening</span>';
     else{const d=cur.deltaCoins[u]; status=d==null?'':`<span class="delta ${d>0?'up':d<0?'dn':''}">${signed(d)}</span>`;}
-    const waiting=!out&&u!==uid&&((phase==='choose'&&!(m&&m.commit))||(phase==='reveal'&&!(m&&m.reveal)));
+    const waiting=!out&&u!==uid&&((phase==='choose'&&(allSigDone(R)?!(m&&m.commit):!(players[u]&&players[u]['sigdone_'+R])))||(phase==='reveal'&&!(m&&m.reveal)));
     const kick=host&&waiting?`<button class="btn tiny" data-act="kick" data-arg="${esc(u)}">${ui.kickAsk===u?'Confirm remove':'Remove'}</button>`:'';
-    return `<div class="prow${out?' out':''}"><span class="pn">${nm(u)}${u===uid?' <span class="chip me">you</span>':''}${u===game.hostId?' <span class="chip">host</span>':''}${u.startsWith('bot_')?' <span class="chip">bot</span>':''} ${kick}</span>${status}${seals(st.tokens[u]||0)}<span class="coins" aria-label="${st.coins[u]} coins">${st.coins[u]}</span></div>`;
+    return `<div class="prow${out?' out':''}"><span class="pn">${nm(u)}${u===uid?' <span class="chip me">you</span>':''}${u===game.hostId?' <span class="chip">host</span>':''}${u.startsWith('bot_')?' <span class="chip">bot</span>':''}${sigChip(u,R,phase)} ${kick}</span>${status}${seals(st.tokens[u]||0)}<span class="coins" aria-label="${st.coins[u]} coins">${st.coins[u]}</span></div>`;
   }).join('');
   return `<section aria-label="Scoreboard"><div class="board">${rows}</div><p class="note" style="margin-top:6px">Coins on the right, reputation seals beside them.${phase==='results'?' The coloured number is this round’s change.':''}</p></section>`;
 }
 function panel(cur,act,me,host){
   const R=game.round, phase=cur.phase;
   if(!me) return `<section class="sheet"><h2>You were removed</h2><p class="note">The host took you out of this game. You can leave and join another room.</p></section>`;
-  if(phase==='choose') return moves[R+'-'+uid]?sealedCard():actionForm();
+  if(phase==='choose'){
+    if(moves[R+'-'+uid]) return sealedCard();
+    return allSigDone(R)?actionForm():signalForm();
+  }
   if(phase==='reveal') return `<section class="sheet"><h2>Everyone has sealed</h2><p class="note">Envelopes are being opened and the dice rolled. If a player's browser is closed this can stall.${host?' Use Remove on anyone who is stuck.':' The host can remove anyone who is stuck.'}</p>${getPending(R)||moves[R+'-'+uid].reveal?'':'<p style="color:var(--stamp)">Your sealed move is not stored in this browser, so it cannot be opened. Ask the host to remove you.</p>'}</section>`;
   return resultsPanel(cur,host);
 }
-function contractSlip(c,i){
-  const sel=ui.contract===i;
-  return `<button class="slip slip-btn" data-act="pick" data-arg="${i}" aria-pressed="${sel}">
+function backersLine(i){
+  const R=game.round;
+  if(!allSigDone(R)) return '';
+  const who=activeAt(game,R).filter(u=>{const s=sigOf(u,R);return s&&s.c===i;});
+  return `<span class="meta sigline">${who.length?'Signalled by: '+who.map(u=>u===uid?'<b>you</b>':nm(u)).join(', '):'No one signalled this'}</span>`;
+}
+function silentLine(){
+  const R=game.round, none=activeAt(game,R).filter(u=>!sigOf(u,R));
+  return none.length?`<p class="note">No signal from: ${none.map(u=>u===uid?'you':nm(u)).join(', ')}</p>`:'';
+}
+function contractSlip(c,i,act,selIdx){
+  act=typeof act==='string'?act:'pick'; if(selIdx===undefined) selIdx=ui.contract;
+  const sel=selIdx===i;
+  return `<button class="slip slip-btn" data-act="${act}" data-arg="${i}" aria-pressed="${sel}">
     <span class="slip-h"><h4>${esc(c.name)}</h4>${sel?'<span class="tag">Chosen</span>':''}</span>
-    <span class="meta">Base reward ${c.reward} &middot; Difficulty ${c.diff} &middot; Round payout ${(c.reward*roundMultiplier(game.round)).toFixed(2)}</span>
-    <span class="note">Dice alone reach it ${odds(c.diff)}% of the time</span></button>`;
+    <span class="meta">Reward ${c.reward} &middot; Difficulty ${c.diff} &middot; Risk bonus ×${+(c.mult||1).toFixed(2)}</span>
+    <span class="meta">Round payout ${Math.round(c.reward*roundMultiplier(game.round))}</span>${act==='pick'?backersLine(i):''}</button>`;
+}
+function sigDeadline(r){
+  const key=code+':s'+r;
+  if(deadlines[key]) return deadlines[key];
+  let d=+ls.get('bp:ds:'+key)||0;
+  if(!d){d=Date.now()+SIGNAL_SECONDS*1000; ls.set('bp:ds:'+key,String(d));}
+  deadlines[key]=d; return d;
+}
+function signalForm(){
+  const R=game.round, cs=game['contracts_'+R]||[];
+  const done=!!(players[uid]&&players[uid]['sigdone_'+R]);
+  sigDeadline(R);
+  if(done) return `<section class="sheet"><p class="kicker">Signal sent</p><h2>Waiting for everyone's signals</h2><p class="note">All signals are shown at the same moment, then sealing opens. Check the scoreboard to see who is still signalling.</p></section>`;
+  return `<section class="sheet">
+    <div class="timer" role="timer" aria-label="Time left to signal"><div class="timer-top"><span class="step">Signal first</span><span id="snum">${fmtTime(SIGNAL_SECONDS)}</span></div><div class="timer-track"><div id="sbar" class="timer-bar" style="width:100%"></div></div></div>
+    <div><p class="step">Before sealing</p><h2>Signal to the table</h2><p class="note">Pick a contract to say you are backing it and invite others in, or skip. A signal is not binding and does not touch your sealed move, so you can bluff. Everyone's signals are shown together, then sealing opens.</p></div>
+    <div class="slips" role="group" aria-label="Signal contract">${cs.map((c,i)=>contractSlip(c,i,'sigc',ui.sigC)).join('')}</div>
+    <div class="introbtns"><button class="btn primary" data-act="signal"${ui.sigC!=null&&!ui.busy?'':' disabled'}>Show this signal</button><button class="btn" data-act="sigskip"${ui.busy?' disabled':''}>No signal</button></div>
+  </section>`;
 }
 function actionForm(){
   const R=game.round, cs=game['contracts_'+R]||[], tok=st.tokens[uid]||0, coins=st.coins[uid]||0;
   const ready=ui.contract!=null&&ui.mode;
+  deadlineFor(R); // starts this round's countdown; the ticker fills in the live numbers
   return `<section class="sheet">
+    <div class="timer" role="timer" aria-label="Time left to choose"><div class="timer-top"><span class="step">Time to choose</span><span id="tnum">${fmtTime(CHOICE_SECONDS)}</span></div><div class="timer-track"><div id="tbar" class="timer-bar" style="width:100%"></div></div><p class="note">If time runs out, your move is sealed automatically (easiest contract, Cooperate, unless you already picked).</p></div>
     <div><p class="step">Step 1</p><h2>Pick a contract</h2><p class="note">Round ${R} reward multiplier: <b>${roundMultiplier(R).toFixed(1)}×</b>. Other players can pick the same contract. Nobody sees your choice until everyone has sealed.</p></div>
-    <div class="slips">${cs.map(contractSlip).join('')}</div>
+    <div class="slips">${cs.map((c,i)=>contractSlip(c,i,'pick',ui.contract)).join('')}</div>
+    ${silentLine()}
     <div><p class="step">Step 2</p><h2>Help it or sink it</h2></div>
     <div class="modes">
       <button class="mode c" data-act="mode" data-arg="C" aria-pressed="${ui.mode==='C'}"><strong>Cooperate</strong><span>Your energy pushes the dice total up. Share the reward if it works.</span></button>
@@ -871,15 +1041,16 @@ function sealedCard(){
   return `<section class="sheet"><p class="kicker">Sealed</p><h2>Your move is locked in</h2>${mine}<p class="note">Waiting for the others. Check the scoreboard above to see who is still thinking.</p></section>`;
 }
 function slipResult(o,fresh){
-  if(o.empty) return `<article class="slip dim"><h4>${esc(o.c.name)}</h4><span class="meta">Base reward ${o.c.reward} &middot; Difficulty ${o.c.diff} &middot; Round multiplier ${roundMultiplier(st.rounds.find(rr=>rr.out&&rr.out.includes(o))?.r||game.round).toFixed(1)}×</span><p class="note">Nobody took this contract.</p></article>`;
+  if(o.empty) return `<article class="slip dim"><h4>${esc(o.c.name)}</h4><span class="meta">Reward ${o.c.reward} &middot; Difficulty ${o.c.diff} &middot; Round multiplier ${roundMultiplier(st.rounds.find(rr=>rr.out&&rr.out.includes(o))?.r||game.round).toFixed(1)}×</span><p class="note">Nobody took this contract.</p></article>`;
   const calc=o.coopN===0?'Nobody cooperated, so nothing could succeed.'
     :`Cooperating energy ${o.coopE} + dice ${o.d1+o.d2} = <b>${o.total}</b>. Needed <b>${o.need}</b>${o.betE?` (${o.c.diff} + ${o.betE} sabotage)`:''}.`;
-  const parts=o.parts.map(p=>`<li class="${p.mode==='C'?'coop':'bet'}"><b>${nm(p.uid)}</b> ${p.mode==='C'?'cooperated':'betrayed'} with ${p.energy}${p.boost?' +3':''}</li>`).join('');
+  const rn=st.rounds.find(rr=>rr.out&&rr.out.includes(o))?.r||game.round;
+  const parts=o.parts.map(p=>{const sg=sigOf(p.uid,rn); return `<li class="${p.mode==='C'?'coop':'bet'}"><b>${nm(p.uid)}</b> ${p.mode==='C'?'cooperated':'betrayed'} with ${p.energy}${p.boost?' +3':''}${sg?` <span class="note">(signalled ${sigText(sg,rn)})</span>`:''}</li>`;}).join('');
   const pay=Object.keys(o.pay).filter(u=>o.pay[u]>0).map(u=>`<span><b>${nm(u)}</b> earns ${o.pay[u]}</span>`).join('');
   const sl=o.seals.map(u=>`<span><b>${nm(u)}</b> gains a seal</span>`).join('');
   const none=!pay&&!sl?'<span class="note">No payout.</span>':'';
   return `<article class="slip${fresh?' thump':''}"><div class="slip-h"><h4>${esc(o.c.name)}</h4><span class="stamp ${o.success?'ok':''}">${o.success?'Funded':'Collapsed'}</span></div>
-    <span class="meta">Base reward ${o.c.reward} &middot; Difficulty ${o.c.diff} &middot; Round multiplier ${roundMultiplier(st.rounds.find(rr=>rr.out&&rr.out.includes(o))?.r||game.round).toFixed(1)}×</span>
+    <span class="meta">Reward ${o.c.reward} &middot; Difficulty ${o.c.diff} &middot; Round multiplier ${roundMultiplier(st.rounds.find(rr=>rr.out&&rr.out.includes(o))?.r||game.round).toFixed(1)}×</span>
     <div class="roll-row${fresh?' rolling':''}"><div class="dice">${die(o.d1)}${die(o.d2)}</div><p class="calc">${calc}</p></div>
     <ul class="parts">${parts}</ul><div class="pay">${pay}${sl}${none}</div></article>`;
 }
@@ -925,42 +1096,69 @@ function finalHTML(){
 
 /* ----- rules ----- */
 function rulesHTML(){
-  const od=[];for(let n=4;n<=12;n++)od.push(`<span>${n}+ &rarr; ${odds(n)}%</span>`);
-  return `<div class="modal-card"><div class="modal-head"><h2>How Blind Pact works</h2><button class="btn small" data-close="1" id="closeRules">Close</button></div>
-  <p class="lead">Eight rounds. Everyone backs a contract in secret and puts energy behind it, either to help it succeed or to sink it. Most coins after round 8 wins.</p>
-  <h3>Setup</h3><ul>
-    <li>Designed for 2 to 15 players: 3 contracts for 2–7 players, 4 for 8–9, 5 for 10–11, and 6 for 12–15. Contract difficulties scale with active players and contract count.</li>
-    <li>Everyone starts with 10 coins and receives 5 more at the start of every round.</li>
-    <li>Each round offers the contract count shown above. Difficulties are recalculated from the active player count, the number of contracts, and each contract’s risk. Lower-risk jobs are easier and higher-reward jobs are harder.</li>
-    <li>You get 5 energy points each round. Two six-sided dice add randomness.</li></ul>
+  return `<div class="modal-card"><div class="modal-head"><h2>Rules</h2><button class="btn small" data-close="1" id="closeRules">Close</button></div>
+  <p class="lead">Eight rounds. Back a contract in secret, then help it or sink it. Most coins after round 8 wins.</p>
   <h3>Each round</h3><ol>
-    <li>Secretly choose one contract. Several players can choose the same one.</li>
-    <li>Choose how much energy to invest (1 to 5) and whether you <b>Cooperate</b> or <b>Betray</b>. Each energy point costs 1 coin.</li>
-    <li>Once everyone has chosen, all choices are revealed together.</li>
-    <li>For every contract someone chose, two dice are rolled. Add the total energy of the cooperating players to the dice sum. If it reaches the difficulty, the contract succeeds.</li>
-    <li>A betrayer's energy raises the contract's difficulty instead of helping it.</li></ol>
-  <h3>Payouts</h3><ul>
-    <li><b>Success:</b> the contract reward, multiplied by the visible round multiplier, is split among cooperators in proportion to effective energy. Betrayers earn nothing.</li>
-    <li><b>Decisive betrayal:</b> if a contract would have succeeded without sabotage but fails because of it, each betrayer earns a bounty: round((30 − base contract reward + total cooperative effective energy) / 2 × round multiplier). If sabotage is not decisive but the contract fails and at least one player cooperated, each betrayer receives a smaller disruption payout (25% of the full bounty, capped at 4 coins). Betrayal pays zero on successful contracts or contracts with no cooperators. Energy still costs coins.</li>
-    <li><b>Reputation:</b> every decisive betrayal earns one seal. Two seals can be traded in once for +3 energy, on a cooperating move or a sabotaging one.</li></ul>
-  <h3>Winning</h3><p>After 8 rounds, the player with the most coins wins.</p>
-  <h3>Details this version settles</h3><ul>
-    <li>Eight contract types rotate between rounds, with a mix of low- and high-risk choices. There are 3, 4, 5, or 6 choices depending on player count. Rewards and calculated difficulties each vary by ±1 each round.</li>
-    <li>Difficulty is calculated as round(7 + 3 × (1 + 0.6 × (active players − 1) / contracts) + risk), then varied by at most 1. The average two-dice roll is 7; risk ranges from 0 to 7. Fewer players generally means lower difficulties.</li>
-    <li>A betrayal is decisive when at least one player cooperated and the contract would have succeeded without sabotage but fails with sabotage. Non-decisive disruption earns no reputation seal.</li>
-    <li>The seal boost is chosen when you seal your move. It costs no coins. Its +3 counts toward your share of a reward or toward sabotage.</li>
-    <li>Cooperation rewards can include fractional coins (up to two decimal places). The reward pool is multiplied by the round multiplier and shared in proportion to effective cooperative energy. Equal contributions receive equal shares whenever the amount can be divided exactly to two decimal places; any indivisible 0.01 remainder is allocated deterministically. Betrayal bounties remain rounded to whole coins.</li>
-    <li>Players tied on coins at the end share the win.</li></ul>
-  <h3>Dice odds</h3><p class="note">Chance two dice alone reach a total:</p><div class="odds">${od.join('')}</div>
-  <h3>Why nobody can peek or cheat the dice</h3><p>Each move is locked with a fingerprint before anyone sees it, then opened and checked against that fingerprint. The dice are worked out from every player's secret salt, so no single person controls them.</p></div>`;
+    <li>You get 5 coins (everyone starts with 10).</li>
+    <li>Secretly pick a contract. Riskier ones pay far more, and others can pick the same one.</li>
+    <li>Choose <b>Cooperate</b> or <b>Betray</b> and invest 1 to 5 energy. Each energy costs 1 coin. You have ${CHOICE_SECONDS} seconds.</li>
+    <li>All choices open together and dice are rolled.</li></ol>
+  <h3>How a contract is resolved</h3><ol>
+    <li>Everyone's energy is paid in coins, whatever happens. A seal boost adds +3 <b>effective</b> energy for free.</li>
+    <li>Two dice are rolled for each contract that was picked (total 2 to 12).</li>
+    <li><b>Cooperating total</b> = cooperators' effective energy + the dice. <b>Needed</b> = the contract's difficulty + betrayers' effective energy.</li>
+    <li>The contract is <b>funded</b> if at least one player cooperated and the cooperating total is at least the needed number. Otherwise it <b>collapses</b>.</li></ol>
+  <h3>Reward calculations</h3><ul>
+    <li><b>Funded:</b> the pool is the contract's reward &times; the round multiplier (1.0, 1.0, 1.1, 1.1, 1.2, 1.2, 1.3, 1.4 for rounds 1 to 8), rounded to a whole number. Cooperators share it in proportion to their effective energy, in whole coins (leftover coins go to the biggest remainders, exact ties are settled fairly by the game's shared seed). Betrayers get nothing.</li>
+    <li><b>Collapsed, decisive sabotage:</b> the cooperators would have beaten the contract's difficulty if nobody had betrayed. The betrayers share a pool of <b>their own real energy back</b> + (0.3 &times; the contract's base reward + 0.4 &times; the cooperators' effective energy) &times; the round multiplier, minimum 1. Split by effective energy. Each decisive betrayer also earns 1 reputation seal.</li>
+    <li><b>Collapsed, not decisive:</b> the contract was going to fail anyway. The betrayers share a pool of 0.5 &times; their own real energy + (0.2 &times; the cooperators' effective energy + 0.1 &times; the base reward) &times; the round multiplier, minimum 1. Split by effective energy. No seals.</li>
+    <li><b>Collapsed with nobody cooperating, or nobody betraying:</b> no one is paid and the energy spent is lost.</li>
+    <li>The <b>base reward</b> is the contract's reward before its risk bonus, so riskier contracts do not make sabotage pay more. Contracts nobody picked do nothing.</li></ul>
+  <h3>Outcomes</h3><ul>
+    <li><b>Funded:</b> cooperators share the reward by how much they put in. Betrayers get nothing.</li>
+    <li><b>Sabotaged:</b> if your betrayal is what makes a contract fail, your energy is refunded and you also share a bonus (based on the contract's reward and the cooperators' energy you wasted) with any other saboteurs, split by energy, and you earn a reputation seal. Disrupting a contract that was failing anyway returns about half your energy plus a small share.</li>
+    <li><b>Seals:</b> spend 2 seals for +3 free energy on one move.</li>
+    <li><b>Signals:</b> before sealing there is a short signal step (${SIGNAL_SECONDS} seconds). You may name a contract you say you are backing, or skip. Signals are shown to everyone at once, then sealing opens. A signal is not binding, so you can bluff. Results list each player's signal next to what they actually did.</li>
+    <li>Rewards grow as the rounds go on. All points are whole numbers, and ties share the win.</li></ul>
+  <p class="note">Moves are locked with a fingerprint before anyone sees them, so nobody can peek or change theirs, and nobody controls the dice.</p></div>`;
 }
 let lastFocus=null;
 function openRules(){
   const m=$('#modal'); m.innerHTML=rulesHTML(); m.hidden=false; lastFocus=document.activeElement;
   const c=$('#closeRules'); if(c) c.focus();
 }
+const INTRO=[
+  {h:'The goal',p:'Play 8 rounds. Every round you earn 5 coins and spend some on contracts. Whoever holds the most coins after round 8 wins.'},
+  {h:'Pick a contract',p:'Each round offers a few contracts. Harder ones pay much more but are less likely to work. You choose in secret, and other players can pick the same one.'},
+  {h:'Help it or sink it',p:'Cooperate to push your contract toward success and share the reward. Betray to make it harder, and earn a bounty if your sabotage is what makes it fail. The energy you invest costs coins either way.'},
+  {h:'The reveal',p:'Everyone\u2019s choices open at the same time, and dice add a little luck. Successful sabotage earns reputation seals you can spend on a boost. You get ${CHOICE_SECONDS} seconds to decide each round.'}
+];
+let introStep=0;
+function paintIntro(){
+  const s=INTRO[introStep], last=introStep===INTRO.length-1;
+  let pips=''; for(let i=0;i<INTRO.length;i++) pips+=`<i class="${i<=introStep?'done':''}"></i>`;
+  $('#modal').innerHTML=`<div class="modal-card"><div class="modal-head"><p class="kicker">How to play &middot; ${introStep+1} of ${INTRO.length}</p><button class="btn small" data-close="1">Skip</button></div>
+    <h2>${s.h}</h2><p class="lead">${s.p.replace('${CHOICE_SECONDS}',CHOICE_SECONDS)}</p>
+    <div class="pips" role="img" aria-label="Step ${introStep+1} of ${INTRO.length}">${pips}</div>
+    <div class="introbtns">${introStep>0?'<button class="btn" data-intro="back">Back</button>':''}<button class="btn primary" id="introNext" data-intro="next">${last?'Got it, let\u2019s play':'Next'}</button>${last?'<button class="btn small" data-intro="rules">Full rules</button>':''}</div></div>`;
+  const n=$('#introNext'); if(n) n.focus();
+}
+function openIntro(){
+  ls.set('bp:intro','1'); introStep=0; lastFocus=document.activeElement;
+  $('#modal').hidden=false; paintIntro();
+}
 function closeRules(){const m=$('#modal'); m.hidden=true; m.innerHTML=''; if(lastFocus&&lastFocus.focus) lastFocus.focus();}
-$('#modal').addEventListener('click',e=>{if(e.target.id==='modal'||e.target.closest('[data-close]')) closeRules();});
+$('#modal').addEventListener('click',e=>{
+  const ib=e.target.closest('[data-intro]');
+  if(ib){
+    const a=ib.dataset.intro;
+    if(a==='next'){if(introStep>=INTRO.length-1) closeRules(); else {introStep++;paintIntro();}}
+    else if(a==='back'){introStep=Math.max(0,introStep-1);paintIntro();}
+    else if(a==='rules'){openRules();}
+    return;
+  }
+  if(e.target.id==='modal'||e.target.closest('[data-close]')) closeRules();
+});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#modal').hidden) closeRules();});
 
 /* ----- Firebase boot ----- */
@@ -988,8 +1186,10 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#modal').hidden
     ui.err='Online multiplayer is unavailable in this preview. You can still use Practice vs bots below.';
   }
   ready=true;
-  if(db&&uid){const saved=ls.get('bp:room');if(saved)enterRoom(saved);}
+  const savedRoom=(db&&uid)?ls.get('bp:room'):null;
+  if(savedRoom) enterRoom(savedRoom);
   render();
+  if(!ls.get('bp:intro')&&!savedRoom) openIntro();
 })();
 </script>
 
